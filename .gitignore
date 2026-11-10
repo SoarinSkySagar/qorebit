@@ -1,0 +1,62 @@
+# ---- Rust (workspace crates and, later, the Xous app / firmware builds) ----
+target/
+**/*.rs.bk
+
+# ---- Zig (BIO programs: the checked-in .rs files are the build inputs) ----
+.zig-cache/
+zig-out/
+
+
+# ---- Node (tools/, companion/) ----
+node_modules/
+npm-debug.log*
+*.tsbuildinfo
+.vite/
+
+# ---- Companion build output (rebuild with `npm run build` in companion/) ----
+companion/dist/
+
+
+# ---- Python (vector generators, device clients) ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---- Secrets and local state: never commit ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*seed*.bin
+funded.json
+
+# ---- Firmware images (rebuild with `cargo xtask dabao …` in xous-core) ----
+*.uf2
+
+# ---- Editors and OS ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Logs ----
+*.log
+
+# ---- make screens output ----
+screens/
+
+# ---- tool caches ----
+tools/.cache/
+
+# ---- QoreChain local devnet: the node binary (fetched by `make devnet-bin`), its chain data and log
+devnet/bin/
+devnet/.home/
+devnet/.node.pid
+devnet/node.log
+
+# ---- companion build output
+companion/dist/
