@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/qorebit-signer"]
+# The Xous app is its own workspace (built for riscv32imac-unknown-xous-elf / dabao-emu); the
+# xous-core submodule is a separate project.
+exclude = ["firmware", "xous-core", "devnet"]
+
+[profile.test]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
