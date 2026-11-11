@@ -129,3 +129,112 @@ impl Account {
     }
 }
 
+fn compressed(vk: &VerifyingKey) -> [u8; 33] {
+    let p = vk.to_encoded_point(true);
+    let mut out = [0u8; 33];
+    out.copy_from_slice(p.as_bytes());
+    out
+}
+
+/// `ripemd160(sha256(compressed public key))`.
+pub fn address_bytes(public: &[u8; 33]) -> [u8; 20] {
+    Ripemd160::digest(Sha256::digest(public)).into()
+}
+
+pub fn bech32_address(addr: &[u8; 20]) -> String {
+    bech32::encode::<bech32::Bech32>(bech32::Hrp::parse(ADDRESS_PREFIX).unwrap(), addr).expect("20 bytes")
+}
+
+/// A `qor1...` address's 20 bytes, if it is a valid one.
+pub fn parse_address(s: &str) -> Option<[u8; 20]> {
+    let (hrp, data) = bech32::decode(s).ok()?;
+    if hrp.as_str() != ADDRESS_PREFIX || data.len() != 20 {
+        return None;
+    }
+    data.try_into().ok()
+}
+
+#[inline(never)]
+pub fn pq_seed(address: &str, mnemonic: &str) -> Zeroizing<[u8; 32]> {
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use sha3::Shake256;
+    let mut x = Shake256::default();
+    x.update(PQ_DERIVATION_DOMAIN.as_bytes());
+    x.update(b"|");
+    x.update(address.as_bytes());
+    x.update(b"|");
+    x.update(mnemonic.as_bytes());
+    let mut out = Zeroizing::new([0u8; 32]);
+    x.finalize_xof().read(&mut *out);
+    out
+}
+
+/// BIP-32 `m/44'/118'/0'/0/index`.
+#[inline(never)]
+fn bip32_secp256k1(seed: &[u8; 64], index: u32) -> Result<k256::SecretKey, KeyError> {
+    type H = Hmac<Sha512>;
+    const HARD: u32 = 0x8000_0000;
+    let mut mac = <H as Mac>::new_from_slice(b"Bitcoin seed").unwrap();
+    mac.update(seed);
+    let mut i = mac.finalize().into_bytes();
+    let mut key: Zeroizing<[u8; 32]> = Zeroizing::new(i[..32].try_into().unwrap());
+    let mut chain: Zeroizing<[u8; 32]> = Zeroizing::new(i[32..].try_into().unwrap());
+    i.zeroize();
+    for step in [44 | HARD, 118 | HARD, HARD, 0, index] {
+        let sk = k256::SecretKey::from_bytes((&*key).into()).map_err(|_| KeyError::Derivation)?;
+        let mut mac = <H as Mac>::new_from_slice(&*chain).unwrap();
+        if step & HARD != 0 {
+            mac.update(&[0]);
+            mac.update(&*key);
+        } else {
+            mac.update(sk.public_key().to_encoded_point(true).as_bytes());
+        }
+        mac.update(&step.to_be_bytes());
+        let mut i = mac.finalize().into_bytes();
+        let mut il = k256::FieldBytes::default();
+        il.copy_from_slice(&i[..32]);
+        let il: Option<Scalar> = Option::from(<Scalar as k256::elliptic_curve::PrimeField>::from_repr(il));
+        let il = il.ok_or(KeyError::Derivation)?;
+        let child = il + *sk.to_nonzero_scalar();
+        let child = Option::<NonZeroScalar>::from(NonZeroScalar::new(child)).ok_or(KeyError::Derivation)?;
+        key.copy_from_slice(&child.to_bytes());
+        chain.copy_from_slice(&i[32..]);
+        i.zeroize();
+    }
+    k256::SecretKey::from_bytes((&*key).into()).map_err(|_| KeyError::Derivation)
+}
+
+// ML-DSA-87 keeps large arrays on the stack (about 290 KiB for the heaviest step). The three steps
+// below are separate, never-inlined functions so their frames are not stacked on top of each other:
+// the peak is the largest single step (~300 KiB), not the sum (~420 KiB).
+
+#[inline(never)]
+fn pq_keygen(seed: &[u8; 32]) -> (alloc::boxed::Box<[u8; PQ_PUBLIC_LEN]>, Zeroizing<Vec<u8>>) {
+    let (pk, sk) = ml_dsa_87::KG::keygen_from_seed(seed);
+    (alloc::boxed::Box::new(pk.into_bytes()), Zeroizing::new(sk.into_bytes().to_vec()))
+}
+
+#[inline(never)]
+fn pq_sign_raw(sk: &[u8], msg: &[u8]) -> Result<alloc::boxed::Box<[u8; PQ_SIG_LEN]>, KeyError> {
+    let sk: [u8; ml_dsa_87::SK_LEN] = sk.try_into().map_err(|_| KeyError::Signing)?;
+    let sk = ml_dsa_87::PrivateKey::try_from_bytes(sk).map_err(|_| KeyError::Signing)?;
+    let sig = sk.try_sign_with_seed(&[0u8; 32], msg, &[]).map_err(|_| KeyError::Signing)?;
+    Ok(alloc::boxed::Box::new(sig))
+}
+
+/// Verify an ML-DSA-87 signature (the device checks proofs of possession it is asked to sign
+/// around, and the tests check signatures with it).
+#[inline(never)]
+pub fn pq_verify(public: &[u8; PQ_PUBLIC_LEN], msg: &[u8], sig: &[u8; PQ_SIG_LEN]) -> bool {
+    ml_dsa_87::PublicKey::try_from_bytes(*public).map(|pk| pk.verify(msg, sig, &[])).unwrap_or(false)
+}
+
+pub fn vec_hex(b: &[u8]) -> Vec<u8> {
+    const D: &[u8; 16] = b"0123456789abcdef";
+    let mut o = Vec::with_capacity(b.len() * 2);
+    for x in b {
+        o.push(D[(x >> 4) as usize]);
+        o.push(D[(x & 15) as usize]);
+    }
+    o
+}
