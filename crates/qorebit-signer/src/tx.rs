@@ -275,3 +275,134 @@ pub fn decode(body: &[u8], auth_info: &[u8]) -> Result<View, TxError> {
     Ok(v)
 }
 
+/// What the device accepts to sign for `acct`: one message, from this account, shown
+/// completely or marked blind, in the right signing mode.
+pub fn check(v: &View, acct: &mut Account, chain_id: &str, mode: Mode) -> Result<(), TxError> {
+    if chain_id.is_empty() || chain_id.len() > 64 || !chain_id.bytes().all(|b| b.is_ascii_graphic()) {
+        return refuse("bad chain id");
+    }
+    if v.msgs.len() != 1 {
+        return refuse("one message per transaction: the device can only show one");
+    }
+    if let Some(pk) = &v.signer_public {
+        if pk[..] != acct.public[..] {
+            return refuse("the transaction names another signer key than this account's");
+        }
+    }
+    if !v.fee_payer.is_empty() && v.fee_payer != acct.address_bech {
+        return refuse("another account pays the fee: it would have to sign too");
+    }
+    let me = acct.address_bech.clone();
+    let signer_ok = |who: &str| if who == me { Ok(()) } else { refuse("the message is not from this account") };
+    match (&v.msgs[0], mode) {
+        (Msg::Send { from, .. }, Mode::Hybrid) => signer_ok(from),
+        (Msg::Delegate { delegator, .. } | Msg::Undelegate { delegator, .. } | Msg::WithdrawReward { delegator, .. }, Mode::Hybrid) => {
+            signer_ok(delegator)
+        }
+        (Msg::Other { .. }, Mode::Hybrid) => Ok(()),
+        (Msg::RegisterPqKey { .. }, Mode::Hybrid) => refuse("a key registration is signed classical-only"),
+        (Msg::RegisterPqKey { account, public_key, algorithm, classical, key_type, proof }, Mode::ClassicalOnly) => {
+            signer_ok(account)?;
+            let own_pq = *acct.pq_public();
+            let proof: Result<[u8; PQ_SIG_LEN], _> = proof.as_slice().try_into();
+            let ok = public_key[..] == own_pq[..]
+                && *algorithm == ALGORITHM_ML_DSA_87
+                && classical[..] == acct.public[..]
+                && key_type == "hybrid"
+                && proof.is_ok_and(|p| keys::pq_verify(&own_pq, &pop_message(chain_id, &me, &own_pq), &p));
+            if ok { Ok(()) } else { refuse("the registration is not this account's own key (or its proof is wrong)") }
+        }
+        (_, Mode::ClassicalOnly) => refuse("classical-only signing is only for a key registration"),
+    }
+}
+
+/// `qorechain-pqc-pop-v1|<chain id>|1|<account>|<hex public key>`.
+pub fn pop_message(chain_id: &str, account: &str, public: &[u8; PQ_PUBLIC_LEN]) -> Vec<u8> {
+    let mut m = format!("{POP_DOMAIN}|{chain_id}|{ALGORITHM_ML_DSA_87}|{account}|").into_bytes();
+    m.extend_from_slice(&keys::vec_hex(public));
+    m
+}
+
+/// The proof of possession a key registration carries: the account's ML-DSA key signs its own
+/// registration message for this chain.
+pub fn register_proof(acct: &mut Account, chain_id: &str) -> Result<Box<[u8; PQ_SIG_LEN]>, KeyError> {
+    let public = *acct.pq_public();
+    let msg = pop_message(chain_id, &acct.address_bech.clone(), &public);
+    acct.pq_sign(&msg)
+}
+
+pub fn hybrid_sign_bytes(version: SignBytes, chain_id: &str, b0: &[u8], auth_info: &[u8]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(b0.len() + auth_info.len() + chain_id.len() + 48);
+    if version == SignBytes::V2 {
+        m.extend_from_slice(HYBRID_V2_DOMAIN.as_bytes());
+        m.extend_from_slice(&(chain_id.len() as u64).to_be_bytes());
+        m.extend_from_slice(chain_id.as_bytes());
+    }
+    m.extend_from_slice(&(b0.len() as u32).to_be_bytes());
+    m.extend_from_slice(b0);
+    m.extend_from_slice(&(auth_info.len() as u32).to_be_bytes());
+    m.extend_from_slice(auth_info);
+    m
+}
+
+pub fn sign_doc(body: &[u8], auth_info: &[u8], chain_id: &str, account_number: u64) -> Vec<u8> {
+    let mut d = Vec::with_capacity(body.len() + auth_info.len() + chain_id.len() + 16);
+    proto::put_len(&mut d, 1, body);
+    proto::put_len(&mut d, 2, auth_info);
+    proto::put_len(&mut d, 3, chain_id.as_bytes());
+    proto::put_uint(&mut d, 4, account_number);
+    d
+}
+
+pub fn tx_raw(body: &[u8], auth_info: &[u8], signature: &[u8]) -> Vec<u8> {
+    let mut t = Vec::with_capacity(body.len() + auth_info.len() + signature.len() + 16);
+    proto::put_len(&mut t, 1, body);
+    proto::put_len(&mut t, 2, auth_info);
+    // repeated bytes keep an empty entry, so write the signature explicitly
+    proto::put_varint(&mut t, 3 << 3 | 2);
+    proto::put_varint(&mut t, signature.len() as u64);
+    t.extend_from_slice(signature);
+    t
+}
+
+pub struct Request<'a> {
+    pub chain_id: &'a str,
+    pub account_number: u64,
+    pub body: &'a [u8],
+    pub auth_info: &'a [u8],
+    pub version: SignBytes,
+    /// Carry the ML-DSA public key inside the extension (the chain also has it registered).
+    pub include_public_key: bool,
+    pub mode: Mode,
+}
+
+pub struct Signed {
+    /// The broadcastable `TxRaw`.
+    pub tx_bytes: Vec<u8>,
+    pub classical: [u8; 64],
+    pub pq: Option<Box<[u8; PQ_SIG_LEN]>>,
+}
+
+/// Make both signatures. Call [`decode`] and [`check`] first and show the user what they found.
+pub fn sign(acct: &mut Account, r: &Request) -> Result<Signed, TxError> {
+    let b0 = strip_extension(r.body, PQC_HYBRID_TYPE_URL)?;
+    let (body, pq) = match r.mode {
+        Mode::ClassicalOnly => (b0, None),
+        Mode::Hybrid => {
+            let msg = hybrid_sign_bytes(r.version, r.chain_id, &b0, r.auth_info);
+            let sig = acct.pq_sign(&msg)?;
+            let mut ext = Vec::with_capacity(PQ_SIG_LEN + 16);
+            proto::put_uint(&mut ext, 1, ALGORITHM_ML_DSA_87);
+            proto::put_len(&mut ext, 2, &sig[..]);
+            if r.include_public_key {
+                let pk = *acct.pq_public();
+                proto::put_len(&mut ext, 3, &pk);
+            }
+            let any = proto::any(PQC_HYBRID_TYPE_URL, &ext);
+            (append_extension(&b0, &any)?, Some(sig))
+        }
+    };
+    let doc = sign_doc(&body, r.auth_info, r.chain_id, r.account_number);
+    let classical = acct.classical_sign(&doc)?;
+    Ok(Signed { tx_bytes: tx_raw(&body, r.auth_info, &classical), classical, pq })
+}
