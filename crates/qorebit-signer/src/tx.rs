@@ -133,3 +133,145 @@ fn text(fs: &[Field], num: u32) -> Result<String, TxError> {
     string(proto::find(fs, num).unwrap_or(&[]))
 }
 
+fn message(type_url: &str, value: &[u8]) -> Result<Msg, TxError> {
+    // a message the device can't show is not parsed at all: it is shown BLIND, by type and fingerprint
+    let known = [MSG_SEND, MSG_DELEGATE, MSG_UNDELEGATE, MSG_WITHDRAW_REWARD, MSG_REGISTER_PQC_KEY_V2];
+    let fs = if known.contains(&type_url) { proto::fields(value).ok_or(TxError::Malformed("message"))? } else { Vec::new() };
+    Ok(match type_url {
+        MSG_SEND => Msg::Send { from: text(&fs, 1)?, to: text(&fs, 2)?, amount: coins(&fs, 3)? },
+        MSG_DELEGATE | MSG_UNDELEGATE => {
+            let (delegator, validator) = (text(&fs, 1)?, text(&fs, 2)?);
+            let amount = coin(proto::find(&fs, 3).unwrap_or(&[]))?;
+            if type_url == MSG_DELEGATE {
+                Msg::Delegate { delegator, validator, amount }
+            } else {
+                Msg::Undelegate { delegator, validator, amount }
+            }
+        }
+        MSG_WITHDRAW_REWARD => Msg::WithdrawReward { delegator: text(&fs, 1)?, validator: text(&fs, 2)? },
+        MSG_REGISTER_PQC_KEY_V2 => Msg::RegisterPqKey {
+            account: text(&fs, 1)?,
+            public_key: proto::find(&fs, 2).unwrap_or(&[]).to_vec(),
+            algorithm: fs.iter().find(|f| f.num == 3 && f.wire == Wire::Varint).map_or(0, |f| f.varint),
+            classical: proto::find(&fs, 4).unwrap_or(&[]).to_vec(),
+            key_type: text(&fs, 5)?,
+            proof: proto::find(&fs, 6).unwrap_or(&[]).to_vec(),
+        },
+        _ => {
+            let h = Sha256::digest(value);
+            Msg::Other { type_url: type_url.to_string(), len: value.len(), id: h[..4].try_into().unwrap() }
+        }
+    })
+}
+
+/// The body without any `PQCHybridSignature` extension (B0).
+pub fn strip_extension(body: &[u8], type_url: &str) -> Result<Vec<u8>, TxError> {
+    let fs = proto::fields(body).ok_or(TxError::Malformed("body"))?;
+    let mut out = Vec::with_capacity(body.len());
+    for f in &fs {
+        if f.num == 1023 && f.wire == Wire::Len {
+            let a = proto::fields(f.bytes).ok_or(TxError::Malformed("extension"))?;
+            if proto::find(&a, 1) == Some(type_url.as_bytes()) {
+                continue;
+            }
+        }
+        out.extend_from_slice(f.raw);
+    }
+    Ok(out)
+}
+
+/// Add an extension option in canonical order: after the existing ones, before any
+/// non-critical extension options (field numbers above 1023).
+pub fn append_extension(body: &[u8], any: &[u8]) -> Result<Vec<u8>, TxError> {
+    let fs = proto::fields(body).ok_or(TxError::Malformed("body"))?;
+    let at = fs.iter().position(|f| f.num > 1023).unwrap_or(fs.len());
+    let mut out = Vec::with_capacity(body.len() + any.len() + 8);
+    for f in &fs[..at] {
+        out.extend_from_slice(f.raw);
+    }
+    proto::put_len(&mut out, 1023, any);
+    for f in &fs[at..] {
+        out.extend_from_slice(f.raw);
+    }
+    Ok(out)
+}
+
+/// Read a transaction (the PQC extension, if present, is ignored: it is made fresh at signing).
+pub fn decode(body: &[u8], auth_info: &[u8]) -> Result<View, TxError> {
+    if body.len() > MAX_PART || auth_info.len() > MAX_PART {
+        return refuse("transaction too large for the device");
+    }
+    let bfs = proto::fields(body).ok_or(TxError::Malformed("body"))?;
+    let mut v = View {
+        msgs: Vec::new(),
+        memo: String::new(),
+        timeout_height: 0,
+        fee: Vec::new(),
+        gas_limit: 0,
+        fee_payer: String::new(),
+        fee_granter: String::new(),
+        sequence: 0,
+        signer_public: None,
+    };
+    for f in &bfs {
+        match (f.num, f.wire) {
+            (1, Wire::Len) => {
+                let a = proto::fields(f.bytes).ok_or(TxError::Malformed("message"))?;
+                let url = proto::utf8(proto::find(&a, 1).unwrap_or(&[])).ok_or(TxError::Malformed("type url"))?;
+                v.msgs.push(message(url, proto::find(&a, 2).unwrap_or(&[]))?);
+            }
+            (2, Wire::Len) => v.memo = string(f.bytes)?,
+            (3, Wire::Varint) => v.timeout_height = f.varint,
+            (1023, Wire::Len) => {
+                let a = proto::fields(f.bytes).ok_or(TxError::Malformed("extension"))?;
+                if proto::find(&a, 1) != Some(PQC_HYBRID_TYPE_URL.as_bytes()) {
+                    return refuse("the transaction carries an extension option the device can't show");
+                }
+            }
+            _ => return refuse(format!("the transaction body has a field the device can't show (field {})", f.num)),
+        }
+    }
+    let afs = proto::fields(auth_info).ok_or(TxError::Malformed("auth info"))?;
+    let mut signers = 0;
+    for f in &afs {
+        match (f.num, f.wire) {
+            (1, Wire::Len) => {
+                signers += 1;
+                let s = proto::fields(f.bytes).ok_or(TxError::Malformed("signer info"))?;
+                if let Some(pk) = proto::find(&s, 1) {
+                    let a = proto::fields(pk).ok_or(TxError::Malformed("public key"))?;
+                    if proto::find(&a, 1) != Some(SECP256K1_PUBKEY.as_bytes()) {
+                        return refuse("the signer's key is not a secp256k1 key");
+                    }
+                    let k = proto::fields(proto::find(&a, 2).unwrap_or(&[])).ok_or(TxError::Malformed("public key"))?;
+                    v.signer_public = Some(proto::find(&k, 1).unwrap_or(&[]).to_vec());
+                }
+                // mode_info.single.mode must be SIGN_MODE_DIRECT (1)
+                let mode = proto::find(&s, 2)
+                    .and_then(proto::fields)
+                    .and_then(|m| proto::find(&m, 1).and_then(proto::fields))
+                    .and_then(|single| single.iter().find(|x| x.num == 1 && x.wire == Wire::Varint).map(|x| x.varint));
+                if mode != Some(1) {
+                    return refuse("only direct signing (SIGN_MODE_DIRECT) is supported");
+                }
+                v.sequence = s.iter().find(|x| x.num == 3 && x.wire == Wire::Varint).map_or(0, |x| x.varint);
+            }
+            (2, Wire::Len) => {
+                let fe = proto::fields(f.bytes).ok_or(TxError::Malformed("fee"))?;
+                v.fee = coins(&fe, 1)?;
+                v.gas_limit = fe.iter().find(|x| x.num == 2 && x.wire == Wire::Varint).map_or(0, |x| x.varint);
+                v.fee_payer = text(&fe, 3)?;
+                v.fee_granter = text(&fe, 4)?;
+            }
+            _ => return refuse("the auth info has a field the device can't show (tip?)"),
+        }
+    }
+    if signers != 1 {
+        return refuse("exactly one signer is supported");
+    }
+    if v.msgs.is_empty() {
+        return refuse("the transaction has no message");
+    }
+    Ok(v)
+}
+
