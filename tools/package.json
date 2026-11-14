@@ -1,0 +1,13 @@
+{
+  "name": "qorebit-tools",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "@qorechain/pqc": "0.2.3",
+    "@qorechain/qoresign": "0.2.0",
+    "@noble/hashes": "2.4.0",
+    "cosmjs-types": "0.11.0",
+    "@scure/bip39": "2.4.0"
+  }
+}
