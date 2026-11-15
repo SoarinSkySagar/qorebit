@@ -1,0 +1,29 @@
+{
+  "mainnet": {
+    "name": "Mainnet",
+    "chainId": "qorechain-vladi",
+    "rest": "https://api.qore.host",
+    "rpc": "https://rpc.qore.host",
+    "explorer": "https://explore.qore.network",
+    "faucet": null,
+    "real": true
+  },
+  "testnet": {
+    "name": "Testnet",
+    "chainId": "qorechain-diana",
+    "rest": "https://api-testnet.qore.host",
+    "rpc": "https://rpc-testnet.qore.host",
+    "explorer": "https://explore.qore.network",
+    "faucet": "https://dashboard.qorechain.io/faucet",
+    "real": false
+  },
+  "devnet": {
+    "name": "Local devnet",
+    "chainId": "qorechain-local",
+    "rest": "http://127.0.0.1:1317",
+    "rpc": "http://127.0.0.1:26657",
+    "explorer": null,
+    "faucet": "bridge",
+    "real": false
+  }
+}
