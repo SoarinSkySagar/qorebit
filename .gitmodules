@@ -1,0 +1,5 @@
+[submodule "xous-core"]
+	path = xous-core
+	url = https://github.com/btchip/xous-core
+	branch = devcon8-workshop
+	ignore = dirty
