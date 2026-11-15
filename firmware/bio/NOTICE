@@ -1,0 +1,5 @@
+build.zig, clang2rustasm.py and include/bio.h are copied from xous-core
+(libs/bio-lib/src/c, https://github.com/betrusted-io/xous-core), Apache-2.0.
+They compile C for the Baochip-1x BIO cores (RV32E + FIFO registers) and patch the
+BIO silicon errata in the generated assembly. The programs (keccak/, display/, buttons/,
+capture/, drive/: main.c and the generated <name>.rs) are Quazar's own code.
