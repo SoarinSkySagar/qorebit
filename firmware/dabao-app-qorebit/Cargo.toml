@@ -1,0 +1,64 @@
+[package]
+name = "dabao-app-qorebit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Qorebit: QoreChain hybrid (secp256k1 + ML-DSA-87) hardware wallet app for the dabao (Xous, USB HID, one button)"
+
+# Built on its own, then handed to xous-core's xtask as a binary (like dabao-app-eth-burner).
+[workspace]
+
+[[bin]]
+name = "qorebit"
+path = "src/main.rs"
+
+[dependencies]
+log = "0.4.14"
+xous = "0.9.71"
+log-server = { package = "xous-api-log", version = "0.1.70" }
+xous-names = { package = "xous-api-names", version = "0.9.72" }
+sha2 = "0.10"
+embedded-graphics = "0.8"
+zeroize = "1.7"
+getrandom = "0.2"
+
+qorebit-signer = { path = "../../crates/qorebit-signer" }
+
+# device builds only: USB HID transport
+usb-bao1x = { path = "../../xous-core/services/usb-bao1x", optional = true }
+# not used directly: the usb-bao1x client needs bao1x-api's std items
+bao1x-api = { path = "../../xous-core/libs/bao1x-api", optional = true, features = ["std"] }
+utralib = { version = "0.1.27", optional = true, default-features = false }
+# keystore app slots (seed) and the PIN attempt counter: IPC types only
+keystore-api = { path = "../../xous-core/libs/keystore-api", optional = true, features = ["gen2", "app-keys"] }
+xous-ipc = { version = "0.10.11", optional = true }
+# BIO cores (panel display and button engines): client of the BIO service in bao1x-hal-service
+bao1x-hal = { path = "../../xous-core/libs/bao1x-hal", optional = true, features = ["std", "board-dabao"] }
+
+[features]
+# Approval screen drawn on the laptop by tools/qorebit_display.py (dev stand-in until a real
+# OLED + buttons). On by default for now; build with `./build.sh ... --vdisplay=false` to drop it.
+default = ["vdisplay"]
+vdisplay = []
+# The ST7789 panel and the one button on the board (`src/panel.rs`): the screen and the presses
+# stay on the device. Build with `./build.sh device --vdisplay=false --panel`.
+panel = []
+# With `panel`: draw through the chip's hardware SPI (uDMA SPI2, `Panel`) instead of the BIO display
+# engine, and poll the button from the CPU. `./build.sh device --panel-udma`.
+panel-udma = ["panel"]
+board-dabao = ["usb-bao1x", "bao1x-api", "keystore-api", "xous-ipc", "bao1x-hal", "utralib/std"]
+bao1x = ["utralib/bao1x"]
+
+[patch.crates-io]
+getrandom = { path = "../../xous-core/imports/getrandom" }
+usb-device = { git = "https://github.com/betrusted-io/usb-device.git", branch = "main" }
+utralib = { path = "../../xous-core/utralib" }
+svd2utra = { path = "../../xous-core/svd2utra" }
+
+[profile.release]
+codegen-units = 1
+debug = false
+strip = false
+lto = "fat"
+incremental = true
+opt-level = 3
