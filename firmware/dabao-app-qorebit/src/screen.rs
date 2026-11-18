@@ -461,3 +461,474 @@ fn fit_seg(s: &str, max_w: i32, sizes: &[i32]) -> Seg {
 
 // ------------------------------------------------------------------ screens
 
+fn idle(f: &mut Frame, account: u32, home: &Home, trust: crate::security::Trust, passphrase: bool) {
+    navbar(f, "");
+    // accounts are numbered from 1, as in the companion app
+    text_at(f, &format!("Account {}", account + 1), &FONT_7X13, MUTED, M, 36, Alignment::Left);
+    if !home.network.is_empty() {
+        let c = if home.network == MAINNET { AMBER } else { MUTED };
+        text_at(f, &home.network, &FONT_7X13, c, WIDTH as i32 - M, 36, Alignment::Right);
+    }
+    // the balance, large, with its unit
+    let (s, on) = match home.balance {
+        Some(w) => (qor4(w), INK),
+        None => ("-.----".to_string(), MUTED),
+    };
+    let unit_w = 3 * 7 + 6;
+    let seg = fit_seg(&s, WIDTH as i32 - 2 * M - unit_w, &[52, 44, 36, 28]);
+    seg.draw(f, &s, M, 56, on, BG);
+    text_at(f, "QOR", &FONT_7X13, MUTED, M + seg.width(&s) + 6, 56 + seg.h - 13, Alignment::Left);
+
+    divider(f, 124);
+    text_at(f, "Address", &FONT_6X10, MUTED, M, 134, Alignment::Left);
+    match (&home.address, home.address_ok) {
+        (Some(_), Some(false)) => {
+            text_at(f, "The app's address is not", &FONT_7X13, RED, M, 150, Alignment::Left);
+            text_at(f, "this device's account", &FONT_7X13, RED, M, 168, Alignment::Left);
+        }
+        (Some(a), _) => address(f, a, 150),
+        (None, _) => text_at(f, "-", &FONT_7X13, GHOST, M, 150, Alignment::Left),
+    }
+
+    // one status line, only when there is something to say
+    use crate::security::Trust;
+    let status = match trust {
+        Trust::Attacked(n) => Some((RED, format!("{n} glitch/tamper alarm{}", if n == 1 { "" } else { "s" }))),
+        _ if !home.app_seen => Some((MUTED, "Waiting for the Qorebit app".to_string())),
+        _ if passphrase => Some((AMBER, "Passphrase wallet".to_string())),
+        _ => None,
+    };
+    if let Some((color, line)) = status {
+        fill(f, M, 222, 6, 6, color);
+        text_at(f, &line, &FONT_6X10, color, M + 12, 220, Alignment::Left);
+    }
+}
+
+fn boot(f: &mut Frame) {
+    navbar(f, "");
+    text_at(f, "Starting", &FONT_9X18_BOLD, INK, WIDTH as i32 / 2, 100, Alignment::Center);
+    text_at(f, "deriving the signing key", &FONT_6X10, MUTED, WIDTH as i32 / 2, 124, Alignment::Center);
+}
+
+/// A bech32 address in two lines of groups of four characters, alternate groups tinted so the
+/// eye can follow it ("qor1 r5v5 srda 7xfth3 ..."): 6 groups, then the rest.
+fn address(f: &mut Frame, a: &str, y: i32) {
+    let groups: Vec<&str> = a.as_bytes().chunks(4).map(|c| core::str::from_utf8(c).unwrap_or("?")).collect();
+    let gw = text_w("0000", &FONT_7X13) + 6;
+    for (i, g) in groups.iter().enumerate() {
+        let (line, col) = (i as i32 / 6, i as i32 % 6);
+        let c = if i % 2 == 0 { INK } else { ADDR2 };
+        text_at(f, g, &FONT_7X13, c, M + col * gw, y + line * 15, Alignment::Left);
+    }
+}
+
+fn approval(f: &mut Frame, a: &Approval, left: u8, timeout: u8) {
+    navbar(f, a.tag);
+    let need = |row: &Row| match row {
+        Row::Addr(..) => 41,
+        Row::Text(t) => 15 * wrap(t, 30).len().clamp(1, 5) as i32 + 2,
+        _ => 15,
+    };
+    let limit = BAR_Y - 6;
+    let mut y = NAV_H + 8;
+    // a heading starting with BLIND warns that the screen can't show everything being signed
+    let heading_color = if a.heading.starts_with("BLIND") { AMBER } else { MUTED };
+    text_at(f, a.heading, &FONT_7X13, heading_color, M, y, Alignment::Left);
+    y += 18;
+    if let Some((value, unit)) = &a.big {
+        // the amount gets the height the rows leave, within 18..=44 px
+        let rows_h: i32 = a.rows.iter().map(need).sum();
+        let room = limit - y - 17 - rows_h;
+        let sizes: Vec<i32> = [44, 40, 36, 32, 28, 24, 20, 18].into_iter().filter(|&h| h <= room).collect();
+        let sizes = if sizes.is_empty() { vec![18] } else { sizes };
+        let unit_w = text_w(unit, &FONT_9X18_BOLD);
+        let seg = fit_seg(value, WIDTH as i32 - 2 * M - unit_w - 8, &sizes);
+        seg.draw(f, value, M, y, INK, BG);
+        let ux = M + seg.width(value) + 8;
+        text_at(f, unit, &FONT_9X18_BOLD, MUTED, ux, y + seg.h - 17, Alignment::Left);
+        y += seg.h + 10;
+    }
+    divider(f, y);
+    y += 7;
+    for row in &a.rows {
+        let need = need(row);
+        if y + need > limit {
+            text_at(f, "...", &FONT_7X13, MUTED, M, y.min(limit - 13), Alignment::Left);
+            break;
+        }
+        match row {
+            Row::Addr(label, addr) => {
+                text_at(f, label, &FONT_6X10, MUTED, M, y, Alignment::Left);
+                address(f, addr, y + 13);
+            }
+            Row::Kv(k, v) => {
+                text_at(f, k, &FONT_7X13, MUTED, M, y, Alignment::Left);
+                text_at(f, v, &FONT_7X13, INK, WIDTH as i32 - M, y, Alignment::Right);
+            }
+            Row::Text(t) => {
+                let lines = wrap(t, 30);
+                fill(f, M, y, 2, 15 * lines.len().clamp(1, 5) as i32 - 2, LINE);
+                for (i, l) in lines.iter().take(5).enumerate() {
+                    let l = if i == 4 && lines.len() > 5 { format!("{}...", &l[..l.len().min(26)]) } else { l.clone() };
+                    text_at(f, &l, &FONT_7X13, INK, M + 8, y + i as i32 * 15, Alignment::Left);
+                }
+            }
+            Row::Warn(t) => {
+                fill(f, M, y + 3, 6, 6, AMBER);
+                text_at(f, t, &FONT_7X13, AMBER, M + 12, y, Alignment::Left);
+            }
+        }
+        y += need;
+    }
+
+    // countdown: shrinking bar, green, then amber, then red
+    let full = WIDTH as i32 - 2 * M - 30;
+    let w = if timeout > 0 { full * left as i32 / timeout as i32 } else { 0 };
+    let tone = match left {
+        0..=9 => RED,
+        10..=19 => AMBER,
+        _ => GREEN,
+    };
+    fill(f, M, BAR_Y, full, 4, LINE);
+    fill(f, M, BAR_Y, w, 4, tone);
+    text_at(f, &format!("{left}s"), &FONT_6X10, tone, WIDTH as i32 - M, BAR_Y - 3, Alignment::Right);
+
+    // the one button: a tap rejects, a hold approves
+    buttons(f, ("REJECT", Btn::Bad), ("APPROVE", Btn::Good));
+}
+
+/// The two answers of the one button: "TAP" (left) and "HOLD" (right), each with what it does here.
+fn buttons(f: &mut Frame, left: (&str, Btn), right: (&str, Btn)) {
+    let bw = (WIDTH as i32 - 2 * 8 - 8) / 2;
+    for (x, tag, (label, b)) in [(8, "TAP", left), (8 + bw + 8, "HOLD", right)] {
+        let (fg, bg) = match b {
+            Btn::Good => (GREEN, GREEN_D),
+            Btn::Bad => (RED, RED_D),
+            Btn::Neutral => (INK, LINE),
+        };
+        RoundedRectangle::new(
+            Rectangle::new(Point::new(x, ACTIONS_Y), Size::new(bw as u32, 32)),
+            CornerRadii::new(Size::new(6, 6)),
+        )
+        .into_styled(PrimitiveStyle::with_fill(bg))
+        .draw(f)
+        .ok();
+        text_at(f, tag, &FONT_6X10, MUTED, x + bw / 2, ACTIONS_Y + 3, Alignment::Center);
+        text_at(f, label, &FONT_7X13, fg, x + bw / 2, ACTIONS_Y + 15, Alignment::Center);
+    }
+}
+
+fn tone_color(t: Tone) -> Pal {
+    match t {
+        Tone::Good => GREEN,
+        Tone::Bad => RED,
+        Tone::Warn => AMBER,
+    }
+}
+
+fn input(f: &mut Frame, i: &Input) {
+    navbar(f, i.tag);
+    let mut y = NAV_H + 8;
+    for line in wrap(&i.heading, 30).iter().take(2) {
+        text_at(f, line, &FONT_7X13, MUTED, M, y, Alignment::Left);
+        y += 15;
+    }
+    y += 6;
+    match &i.body {
+        Body::Pin { entered, total, note } => {
+            let n = *total as i32;
+            let (bw, gap) = (22, 4);
+            let x0 = (WIDTH as i32 - (n * bw + (n - 1) * gap)) / 2;
+            let by = y + 22;
+            for k in 0..n {
+                let x = x0 + k * (bw + gap);
+                let filled = k < *entered as i32;
+                RoundedRectangle::new(Rectangle::new(Point::new(x, by), Size::new(bw as u32, 30)), CornerRadii::new(Size::new(4, 4)))
+                    .into_styled(PrimitiveStyle::with_fill(if filled { GHOST } else { BG }))
+                    .draw(f)
+                    .ok();
+                RoundedRectangle::new(Rectangle::new(Point::new(x, by), Size::new(bw as u32, 30)), CornerRadii::new(Size::new(4, 4)))
+                    .into_styled(PrimitiveStyle::with_stroke(if k == *entered as i32 { INK } else { LINE }, 2))
+                    .draw(f)
+                    .ok();
+                if filled {
+                    fill(f, x + bw / 2 - 3, by + 12, 6, 6, INK);
+                }
+            }
+            text_at(f, "tap = 0    hold = 1", &FONT_6X10, MUTED, WIDTH as i32 / 2, by + 44, Alignment::Center);
+            if let Some((tone, t)) = note {
+                for (k, l) in wrap(t, 30).iter().take(2).enumerate() {
+                    text_at(f, l, &FONT_7X13, tone_color(*tone), WIDTH as i32 / 2, by + 66 + k as i32 * 15, Alignment::Center);
+                }
+            }
+        }
+        Body::Words(words) => {
+            for (k, (n, w)) in words.iter().take(6).enumerate() {
+                let wy = y + k as i32 * 23;
+                text_at(f, &format!("{n:>2}"), &FONT_9X18_BOLD, MUTED, M, wy, Alignment::Left);
+                text_at(f, w, &FONT_9X18_BOLD, INK, M + 34, wy, Alignment::Left);
+            }
+        }
+        Body::Text(lines) => {
+            for (tone, t) in lines {
+                for l in wrap(t, 30) {
+                    if y > ACTIONS_Y - 16 {
+                        break;
+                    }
+                    text_at(f, &l, &FONT_7X13, tone.map(tone_color).unwrap_or(INK), M, y, Alignment::Left);
+                    y += 15;
+                }
+                y += 5;
+            }
+        }
+        Body::Pick { above, word, below } => {
+            text_at(f, above, &FONT_7X13, MUTED, WIDTH as i32 / 2, y + 6, Alignment::Center);
+            let w2 = text_w(word, &FONT_9X18_BOLD);
+            let mut d = Double(f, Point::new((WIDTH as i32 - 2 * w2) / 2, y + 32));
+            Text::with_baseline(word, Point::zero(), MonoTextStyle::new(&FONT_9X18_BOLD, INK), Baseline::Top).draw(&mut d).ok();
+            for (k, l) in wrap(below, 30).iter().take(3).enumerate() {
+                text_at(f, l, &FONT_6X10, MUTED, WIDTH as i32 / 2, y + 82 + k as i32 * 12, Alignment::Center);
+            }
+        }
+    }
+    buttons(f, (&i.left.0, i.left.1), (&i.right.0, i.right.1));
+}
+
+fn result(f: &mut Frame, tone: Tone, word: &str, lines: &[String]) {
+    let (fg, bg) = match tone {
+        Tone::Good => (GREEN, GREEN_D),
+        Tone::Bad => (RED, RED_D),
+        Tone::Warn => (AMBER, AMBER_D),
+    };
+    navbar(f, "");
+    // a full-width band in the result colour, the word at 2x
+    fill(f, 0, 62, WIDTH as i32, 64, bg);
+    fill(f, 0, 62, WIDTH as i32, 3, fg);
+    fill(f, 0, 123, WIDTH as i32, 3, fg);
+    let w2 = text_w(word, &FONT_9X18_BOLD);
+    let mut d = Double(f, Point::new((WIDTH as i32 - 2 * w2) / 2, 76));
+    Text::with_baseline(word, Point::zero(), MonoTextStyle::new(&FONT_9X18_BOLD, fg), Baseline::Top).draw(&mut d).ok();
+    for (i, l) in lines.iter().take(4).enumerate() {
+        let c = if i == 0 { INK } else { MUTED };
+        text_at(f, l, &FONT_7X13, c, WIDTH as i32 / 2, 142 + i as i32 * 18, Alignment::Center);
+    }
+}
+
+fn working(f: &mut Frame, word: &str, lines: &[String], permille: u16) {
+    result(f, Tone::Good, word, lines);
+    // the progress bar under the lines, and the percentage
+    let (x, y, w) = (M + 8, 196, WIDTH as i32 - 2 * (M + 8));
+    fill(f, x, y, w, 8, LINE);
+    fill(f, x, y, w * permille.min(1000) as i32 / 1000, 8, GREEN);
+    text_at(f, &format!("{}%", permille / 10), &FONT_7X13, MUTED, WIDTH as i32 / 2, y + 14, Alignment::Center);
+}
+
+/// Draw `screen` into a fresh frame. `left` / `timeout`: approval countdown in seconds.
+pub fn render(screen: &Screen, left: u8, timeout: u8) -> Frame {
+    let mut f = Frame::new();
+    match screen {
+        Screen::Boot => boot(&mut f),
+        Screen::Idle { account, home, trust, passphrase } => {
+            idle(&mut f, *account, home, *trust, *passphrase)
+        }
+        Screen::Input(i) => input(&mut f, i),
+        Screen::Approval(a) => approval(&mut f, a, left, timeout),
+        Screen::Result { tone, word, lines } => result(&mut f, *tone, word, lines),
+        Screen::Working { word, lines, permille } => working(&mut f, word, lines, *permille),
+    }
+    f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ADDR: &str = "qor1r5v5srda7xfth3hn2s26txvrcrntldju0qscza";
+
+    fn demo_home() -> Home {
+        Home {
+            balance: Some(1_234_567_000),
+            address: Some(ADDR.to_string()),
+            address_ok: Some(true),
+            network: "qorechain-local".into(),
+            app_seen: true,
+        }
+    }
+
+    #[test]
+    fn balances() {
+        assert_eq!(qor4(1_234_567_000), "1234.5670");
+        assert_eq!(qor4(0), "0.0000");
+        assert_eq!(qor4(50), "0.0000");
+        assert_eq!(qor4(500), "0.0005");
+    }
+
+    fn decode(enc: &[u8], n: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < enc.len() {
+            let (c, r) = (enc[i] >> 4, enc[i] & 15);
+            let run = if r == 15 {
+                i += 1;
+                16 + enc[i] as usize
+            } else {
+                r as usize + 1
+            };
+            out.extend(std::iter::repeat(c).take(run));
+            i += 1;
+        }
+        assert_eq!(out.len(), n);
+        out
+    }
+
+    #[test]
+    fn rle_round_trip_and_diff() {
+        let a = render(&Screen::Idle { account: 0, home: Home::default(), trust: crate::security::Trust::Secure, passphrase: false }, 0, 60);
+        let enc = a.encode_rows(0, HEIGHT as usize);
+        assert_eq!(decode(&enc, FRAME_LEN), a.0);
+        assert!(enc.len() < 12_000, "idle frame is {} bytes", enc.len());
+        let ap = Approval { tag: "SEND", heading: "Send", big: Some(("1.5".into(), "QOR")), rows: vec![] };
+        let b = render(&Screen::Approval(ap.clone()), 59, 60);
+        let c = render(&Screen::Approval(ap), 58, 60);
+        let (y0, y1) = c.changed_rows(&b).unwrap();
+        assert!(y0 >= BAR_Y as usize - 4 && y1 <= BAR_Y as usize + 8, "countdown changes only its rows: {y0}..{y1}");
+    }
+
+    #[test]
+    fn an_address_fits_its_two_lines() {
+        // 43 characters in groups of four: 6 per line at 34 px, inside the 216 px between margins
+        assert_eq!(ADDR.len(), 42);
+        assert!(6 * (text_w("0000", &FONT_7X13) + 6) - 6 <= WIDTH as i32 - 2 * M);
+        assert!(ADDR.as_bytes().chunks(4).count() <= 12);
+    }
+
+    /// `QOREBIT_SCREENS=dir cargo test dump_screens` writes every screen as a PPM for review.
+    #[test]
+    fn dump_screens() {
+        let Ok(dir) = std::env::var("QOREBIT_SCREENS") else { return };
+        let to = "qor1w4rn5hw6gz5pxzpdwdsrvw5mrmf9h7wwkt9hca".to_string();
+        let send = Approval {
+            tag: "SEND",
+            heading: "Send",
+            big: Some(("1.234567".into(), "QOR")),
+            rows: vec![
+                Row::Addr("To", to.clone()),
+                Row::Kv("From", "Account 1".into()),
+                Row::Kv("Max fee", "0.05 QOR".into()),
+                Row::Kv("Network", "qorechain-local".into()),
+            ],
+        };
+        let mainnet = Approval {
+            tag: "SEND",
+            heading: "Send",
+            big: Some(("250".into(), "QOR")),
+            rows: vec![
+                Row::Warn("MAINNET: real funds".into()),
+                Row::Addr("To", to.clone()),
+                Row::Kv("From", "Account 1".into()),
+                Row::Kv("Network", "qorechain-vladi".into()),
+            ],
+        };
+        let stake = Approval {
+            tag: "STAKE",
+            heading: "Delegate to a validator",
+            big: Some(("250".into(), "QOR")),
+            rows: vec![
+                Row::Kv("Validator", "qorvaloper1erha..jns5y3ka".into()),
+                Row::Kv("From", "Account 1".into()),
+                Row::Kv("Max fee", "0.05 QOR".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
+        let register = Approval {
+            tag: "REGISTER",
+            heading: "Register your post-quantum key",
+            big: None,
+            rows: vec![
+                Row::Addr("Account", ADDR.to_string()),
+                Row::Kv("Key", "ML-DSA-87".into()),
+                Row::Kv("Signed", "classical only".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
+        let blind = Approval {
+            tag: "BLIND",
+            heading: "BLIND: a message the device can't show",
+            big: None,
+            rows: vec![
+                Row::Kv("Type", "MsgPostRollupData".into()),
+                Row::Kv("Size / id", "1204 bytes / 9f3a01c2".into()),
+                Row::Kv("From", "Account 1".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
+        let pin = Screen::Input(Input {
+            tag: "PIN",
+            heading: "Your PIN, to sign".into(),
+            body: Body::Pin { entered: 3, total: 8, note: Some((Tone::Warn, "4 tries left before signing locks".into())) },
+            left: ("0".into(), Btn::Neutral),
+            right: ("1".into(), Btn::Neutral),
+            pin: true,
+        });
+        let shots = [
+            ("1-idle", Screen::Idle { account: 0, home: demo_home(), trust: crate::security::Trust::Secure, passphrase: false }, 0),
+            ("2-send", Screen::Approval(send), 47),
+            ("3-mainnet-send", Screen::Approval(mainnet), 40),
+            ("4-delegate", Screen::Approval(stake), 33),
+            ("5-register", Screen::Approval(register), 52),
+            ("6-blind", Screen::Approval(blind), 12),
+            ("7-approved", Screen::Result { tone: Tone::Good, word: "APPROVED".into(), lines: vec!["Signing on the chip".into(), "ML-DSA-87 + secp256k1".into()] }, 0),
+            ("8-signed", Screen::Result { tone: Tone::Good, word: "SIGNED".into(), lines: vec!["12 ms on the chip".into(), "Checked before release".into()] }, 0),
+            ("9-rejected", Screen::Result { tone: Tone::Bad, word: "REJECTED".into(), lines: vec!["Nothing was signed".into()] }, 0),
+            ("10-timeout", Screen::Result { tone: Tone::Warn, word: "TIMED OUT".into(), lines: vec!["No decision in 60 s".into(), "Nothing was signed".into()] }, 0),
+            ("11-boot", Screen::Boot, 0),
+            ("12-pin", pin, 0),
+            ("13-idle-waiting", Screen::Idle { account: 0, home: Home::default(), trust: crate::security::Trust::Developer, passphrase: false }, 0),
+            (
+                "14-restore-pick",
+                Screen::Input(Input {
+                    tag: "RESTORE",
+                    heading: "Word 3 of 24: where is yours?".into(),
+                    body: Body::Pick {
+                        above: "between abandon and zoo".into(),
+                        word: "lab".into(),
+                        below: "tap: my word comes earlier. hold: it's this word or later".into(),
+                    },
+                    left: ("< EARLIER".into(), Btn::Neutral),
+                    right: ("LATER >".into(), Btn::Neutral),
+                    pin: false,
+                }),
+                0,
+            ),
+            (
+                "15-wipe",
+                Screen::Input(Input {
+                    tag: "ERASE",
+                    heading: "Erase this wallet?".into(),
+                    body: Body::Text(vec![
+                        (None, "The seed and the PIN are deleted, and a new wallet is made.".into()),
+                        (Some(Tone::Bad), "Without your 24 words, the funds on this wallet are lost.".into()),
+                    ]),
+                    left: ("KEEP".into(), Btn::Good),
+                    right: ("ERASE".into(), Btn::Bad),
+                    pin: false,
+                }),
+                0,
+            ),
+        ];
+        for (name, sc, left) in shots {
+            let f = render(&sc, left, 60);
+            let mut ppm = format!("P6 {WIDTH} {HEIGHT} 255\n").into_bytes();
+            for &i in &f.0 {
+                ppm.extend_from_slice(&PALETTE[i as usize]);
+            }
+            std::fs::write(format!("{dir}/{name}.ppm"), ppm).unwrap();
+        }
+    }
+
+    #[test]
+    fn wraps() {
+        assert_eq!(wrap("hello world foo", 11), vec!["hello world", "foo"]);
+        assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+    }
+}
