@@ -190,3 +190,507 @@ fn parse_sign_tx(p: &[u8]) -> Option<SignTx<'_>> {
     Some(SignTx { account, flags, account_number, chain, body, auth_info })
 }
 
+impl App {
+    fn account(&self, index: u32) -> Result<Account, Vec<u8>> {
+        self.wallet.account(index).map_err(|_| protocol::error(Status::BadRequest, "no such account (0..8)"))
+    }
+
+    fn get_account(&mut self, p: &[u8]) -> Vec<u8> {
+        let Some(index) = p.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap())) else {
+            return protocol::error(Status::BadRequest, "expected account u32");
+        };
+        match self.account(index) {
+            Ok(a) => {
+                let mut out = Vec::with_capacity(53 + 43);
+                out.extend_from_slice(&a.address);
+                out.extend_from_slice(&a.public);
+                out.extend_from_slice(a.address_bech.as_bytes());
+                protocol::response(Status::Ok, &out)
+            }
+            Err(e) => e,
+        }
+    }
+
+    fn get_pq_public_key(&mut self, p: &[u8]) -> Vec<u8> {
+        let Some(index) = p.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap())) else {
+            return protocol::error(Status::BadRequest, "expected account u32");
+        };
+        match self.account(index) {
+            Ok(mut a) => match crypto(move || a.pq_public().to_vec()) {
+                Ok(pk) => protocol::response(Status::Ok, &pk),
+                Err(e) => e,
+            },
+            Err(e) => e,
+        }
+    }
+
+    /// Show `screen`, wait for a hold of the button (a tap or the timeout rejects), then the
+    /// signing PIN. `Ok` only when the user approved and the PIN was right.
+    fn approve(&mut self, screen: screen::Approval) -> Result<(), Vec<u8>> {
+        if !ui::Ui::enabled() {
+            return Err(protocol::error(Status::NoApprovalUi, "no display in this build: refusing to sign"));
+        }
+        // the signing PIN: refused up front without one, or when locked
+        if let Some(e) = self.pin_refusal() {
+            return Err(e);
+        }
+        JOB.store(8, Ordering::Relaxed);
+        log::info!("waiting for approval: {}", screen.heading);
+        let decision = ui::ui().ask(screen::Screen::Approval(screen), ui::APPROVAL_TIMEOUT);
+        let r = match decision {
+            ui::Decision::Approve => match flows::check_pin(&mut flows::DeviceIo, &mut self.store, "Your PIN, to sign") {
+                flows::PinOk::Right => {
+                    log::info!("approved on the device, PIN right");
+                    Ok(())
+                }
+                p => Err(Self::pin_failure(p)),
+            },
+            // the screen already shows REJECTED / TIMED OUT
+            ui::Decision::Reject => Err(protocol::error(Status::Rejected, "rejected on the device")),
+            ui::Decision::Timeout => Err(protocol::error(Status::Rejected, "no decision within 60 s: rejected")),
+            ui::Decision::Unavailable => Err(protocol::error(Status::NoApprovalUi, "no display in this build: refusing to sign")),
+        };
+        JOB.store(2, Ordering::Relaxed);
+        r
+    }
+
+    /// The result screen and idle screen after a signing attempt.
+    fn signed_screen(&mut self, r: &Result<tx::Signed, TxError>, ms: u32, account: u32) {
+        match r {
+            Ok(_) => ui::ui().show_result(
+                Tone::Good,
+                "SIGNED",
+                vec![format!("{ms} ms on the chip"), "Both signatures checked".into()],
+            ),
+            Err(TxError::Key(KeyError::Fault)) => {
+                ui::ui().show_result(Tone::Bad, "FAULT", vec!["Signature withheld".into(), "Self-check failed".into()]);
+                log::error!("fault detected while signing: signature withheld");
+            }
+            Err(_) => ui::ui().show_result(Tone::Bad, "FAILED", vec!["Nothing was signed".into()]),
+        }
+        self.refresh_idle(account);
+    }
+
+    /// SIGN_TX: the device decodes the transaction itself, shows it, and signs what it decoded.
+    fn sign_tx(&mut self, payload: &[u8]) -> Vec<u8> {
+        let Some(req) = parse_sign_tx(payload) else {
+            return protocol::error(Status::BadRequest, "expected account u32, flags u8, account number u64, chain id, body, auth info");
+        };
+        let mut acct = match self.account(req.account) {
+            Ok(a) => a,
+            Err(e) => return e,
+        };
+        let mode = if req.flags & protocol::FLAG_CLASSICAL_ONLY != 0 { Mode::ClassicalOnly } else { Mode::Hybrid };
+        let view = match tx::decode(req.body, req.auth_info) {
+            Ok(v) => v,
+            Err(e) => return Self::refusal(e),
+        };
+        let checked = match crypto(|| tx::check(&view, &mut acct, req.chain, mode)) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        if let Err(e) = checked {
+            return Self::refusal(e);
+        }
+        let screen = describe(&view, &acct, req.chain, mode);
+        if let Err(e) = self.approve(screen) {
+            return e;
+        }
+        ui::ui().show_working("SIGNING", vec!["ML-DSA-87 + secp256k1".into()]);
+        let request = tx::Request {
+            chain_id: req.chain,
+            account_number: req.account_number,
+            body: req.body,
+            auth_info: req.auth_info,
+            version: if req.flags & protocol::FLAG_SIGN_BYTES_V1 != 0 { SignBytes::V1 } else { SignBytes::V2 },
+            include_public_key: req.flags & protocol::FLAG_INCLUDE_PQ_KEY != 0,
+            mode,
+        };
+        let t = Instant::now();
+        let r = match crypto(|| tx::sign(&mut acct, &request)) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let ms = t.elapsed().as_millis() as u32;
+        self.signed_screen(&r, ms, req.account);
+        match r {
+            Ok(s) => {
+                log::info!("signed in {ms} ms: {} bytes", s.tx_bytes.len());
+                let mut out = Vec::with_capacity(8 + s.tx_bytes.len() + 64 + keys::PQ_SIG_LEN);
+                out.extend_from_slice(&ms.to_be_bytes());
+                out.extend_from_slice(&(s.tx_bytes.len() as u32).to_be_bytes());
+                out.extend_from_slice(&s.tx_bytes);
+                out.extend_from_slice(&s.classical);
+                if let Some(pq) = &s.pq {
+                    out.extend_from_slice(&pq[..]);
+                }
+                protocol::response(Status::Ok, &out)
+            }
+            Err(TxError::Key(KeyError::Fault)) => protocol::error(Status::SigningFailed, "fault detected while signing: the signature was withheld"),
+            Err(e) => protocol::error(Status::SigningFailed, &format!("signing failed: {e:?}")),
+        }
+    }
+
+    /// REGISTER_PROOF: the account's ML-DSA key signs its registration message for a chain, so
+    /// the app can build the key-registration transaction (which `SIGN_TX` then checks and
+    /// signs classical-only).
+    fn register_proof(&mut self, p: &[u8]) -> Vec<u8> {
+        let (Some(index), Some(n)) = (p.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap())), p.get(4).map(|&n| n as usize)) else {
+            return protocol::error(Status::BadRequest, "expected account u32, chain id (len u8)");
+        };
+        let Some(chain) = p.get(5..5 + n).and_then(|c| core::str::from_utf8(c).ok()).filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_graphic())) else {
+            return protocol::error(Status::BadRequest, "bad chain id");
+        };
+        let mut acct = match self.account(index) {
+            Ok(a) => a,
+            Err(e) => return e,
+        };
+        let mut rows = Vec::new();
+        if chain == MAINNET {
+            rows.push(Row::Warn("MAINNET: real funds".into()));
+        } else if chain != TESTNET && chain != DEVNET {
+            rows.push(Row::Warn("Unknown network".into()));
+        }
+        rows.push(Row::Addr("Account", acct.address_bech.clone()));
+        rows.push(Row::Kv("Key", "ML-DSA-87 (post-quantum)".into()));
+        rows.push(Row::Kv("Network", chain.to_string()));
+        let screen = screen::Approval { tag: "REGISTER", heading: "Prove your post-quantum key", big: None, rows };
+        if let Err(e) = self.approve(screen) {
+            return e;
+        }
+        ui::ui().show_working("SIGNING", vec!["Proof of possession".into()]);
+        let t = Instant::now();
+        let r = match crypto(|| tx::register_proof(&mut acct, chain)) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let ms = t.elapsed().as_millis() as u32;
+        self.refresh_idle(index);
+        match r {
+            Ok(proof) => {
+                ui::ui().show_result(Tone::Good, "SIGNED", vec![format!("{ms} ms on the chip"), "Proof of possession".into()]);
+                let mut out = ms.to_be_bytes().to_vec();
+                out.extend_from_slice(&proof[..]);
+                protocol::response(Status::Ok, &out)
+            }
+            Err(e) => {
+                ui::ui().show_result(Tone::Bad, "FAILED", vec!["Nothing was signed".into()]);
+                protocol::error(Status::SigningFailed, &format!("signing failed: {e:?}"))
+            }
+        }
+    }
+
+    fn refusal(e: TxError) -> Vec<u8> {
+        let (status, msg) = match e {
+            TxError::Malformed(w) => (Status::BadRequest, format!("can't read the transaction: {w}")),
+            TxError::Refused(w) => (Status::Refused, w),
+            TxError::Key(k) => (Status::SigningFailed, format!("{k:?}")),
+        };
+        log::warn!("refused: {msg}");
+        ui::ui().show_result(Tone::Warn, "REFUSED", vec![msg.chars().take(30).collect(), "Nothing was signed".into()]);
+        protocol::error(status, &msg)
+    }
+
+    /// SET_HOME: the app's view of an account (balance, address, network) for the home screen.
+    /// The address is checked against this device's own key.
+    fn set_home(&mut self, p: &[u8]) -> Vec<u8> {
+        let bad = || protocol::error(Status::BadRequest, "expected account u32, balance u128, chain id (len u8), address (len u8)");
+        if p.len() < 22 {
+            return bad();
+        }
+        let account = u32::from_be_bytes(p[0..4].try_into().unwrap());
+        let balance = u128::from_be_bytes(p[4..20].try_into().unwrap());
+        let n = p[20] as usize;
+        let Some(chain) = p.get(21..21 + n).and_then(|c| core::str::from_utf8(c).ok()) else { return bad() };
+        let Some(&m) = p.get(21 + n) else { return bad() };
+        let Some(addr) = p.get(22 + n..22 + n + m as usize).and_then(|a| core::str::from_utf8(a).ok()) else { return bad() };
+        let Ok(acct) = self.account(account) else { return protocol::error(Status::BadRequest, "no such account") };
+        let ok = acct.address_bech == addr;
+        if !ok {
+            log::warn!("SET_HOME: the app's address for account {} is not this device's", account + 1);
+        }
+        self.home = Some((
+            account,
+            screen::Home {
+                balance: Some(balance),
+                address: Some(addr.to_string()),
+                address_ok: Some(ok),
+                network: chain.chars().take(24).collect(),
+                app_seen: true,
+            },
+        ));
+        self.refresh_idle(account);
+        protocol::response(Status::Ok, &[ok as u8])
+    }
+
+    fn refresh_idle(&mut self, account: u32) {
+        self.idle_account = account;
+        self.security.pin_tries = storage::pin_tries_left(&mut self.store);
+        self.security.pin_set = storage::pin_is_set(&mut self.store);
+        let home = match &self.home {
+            Some((a, h)) if *a == account => h.clone(),
+            Some((_, h)) => screen::Home { app_seen: true, network: h.network.clone(), ..Default::default() },
+            None => screen::Home::default(),
+        };
+        // without a SET_HOME for this account the device still knows its own address
+        let home = if home.address.is_none() {
+            screen::Home { address: self.wallet.account(account).ok().map(|a| a.address_bech), address_ok: Some(true), ..home }
+        } else {
+            home
+        };
+        ui::ui().set_idle(screen::Screen::Idle {
+            account,
+            home,
+            trust: self.security.trust(),
+            passphrase: self.security.passphrase,
+        });
+    }
+
+    // ------------------------------------------------------------ PIN, recovery words, wipe
+
+    /// Use `entropy` as the wallet seed (no passphrase) from now on.
+    fn use_entropy(&mut self, entropy: zeroize::Zeroizing<[u8; 32]>, origin: storage::SeedOrigin) {
+        self.wallet = Wallet::new(&entropy, "");
+        self.origin = origin;
+        self.security.passphrase = false;
+    }
+
+    /// Store `entropy` as the seed (wrapped on the device) and switch to it.
+    fn install_entropy(&mut self, entropy: zeroize::Zeroizing<[u8; 32]>, origin: storage::SeedOrigin) -> bool {
+        #[cfg(target_os = "xous")]
+        let wrap: Option<&mut dyn storage::SeedWrap> = Some(&mut self.chip_key);
+        #[cfg(not(target_os = "xous"))]
+        let wrap: Option<&mut dyn storage::SeedWrap> = None;
+        match storage::replace_entropy(&mut self.store, wrap, &entropy) {
+            Some(protection) => {
+                self.security.seed = protection;
+                self.use_entropy(entropy, origin);
+                true
+            }
+            None => {
+                log::error!("could not store the new seed");
+                false
+            }
+        }
+    }
+
+    /// After a wipe: a fresh seed from the TRNG; the companion then asks for a new PIN.
+    fn new_wallet(&mut self, io: &mut dyn flows::Io) {
+        storage::wipe_wallet(&mut self.store);
+        if !self.install_entropy(storage::fresh_entropy(), storage::SeedOrigin::Created) {
+            io.result(Tone::Bad, "FAILED", vec!["Couldn't store a new seed".into()]);
+        }
+    }
+
+    /// SET_PIN: choose the signing PIN, or change it (the current one first).
+    fn set_pin(&mut self) -> Vec<u8> {
+        if let Some(e) = Self::no_display() {
+            return e;
+        }
+        let mut io = flows::DeviceIo;
+        let new = if storage::pin_is_set(&mut self.store) {
+            match flows::change_pin(&mut io, &mut self.store) {
+                None => return Self::cancelled(),
+                Some(None) => return protocol::error(Status::Rejected, "wrong PIN: unchanged"),
+                Some(Some(p)) => p,
+            }
+        } else {
+            match flows::choose_pin(&mut io, "Choose a signing PIN") {
+                None => return Self::cancelled(),
+                Some(p) => p,
+            }
+        };
+        self.store_pin(&mut io, new)
+    }
+
+    /// RESET_PIN: forgot the PIN: this wallet's 24 words on the device, then a new PIN.
+    fn reset_pin(&mut self) -> Vec<u8> {
+        if let Some(e) = Self::no_display() {
+            return e;
+        }
+        let mut io = flows::DeviceIo;
+        match flows::forgot_pin(&mut io, self.wallet.entropy()) {
+            None => Self::cancelled(),
+            Some(None) => protocol::error(Status::Rejected, "those words are another wallet's: PIN unchanged"),
+            Some(Some(p)) => self.store_pin(&mut io, p),
+        }
+    }
+
+    fn store_pin(&mut self, io: &mut dyn flows::Io, pin: u8) -> Vec<u8> {
+        let reply = if storage::set_pin(&mut self.store, pin) {
+            io.result(Tone::Good, "PIN SET", vec!["Asked for every signature".into(), format!("{} wrong in a row lock signing", storage::PIN_TRIES)]);
+            protocol::response(Status::Ok, b"PIN set")
+        } else {
+            io.result(Tone::Bad, "FAILED", vec!["Couldn't store the PIN".into()]);
+            protocol::error(Status::StoreFailed, "could not store the PIN")
+        };
+        self.refresh_idle(self.idle_account);
+        reply
+    }
+
+    fn no_display() -> Option<Vec<u8>> {
+        (!ui::Ui::enabled()).then(|| protocol::error(Status::NoApprovalUi, "no display in this build"))
+    }
+
+    fn cancelled() -> Vec<u8> {
+        protocol::error(Status::Rejected, "cancelled on the device")
+    }
+
+    /// SHOW_PHRASE: the PIN again, then the 24 words on the device's screen.
+    fn show_phrase(&mut self) -> Vec<u8> {
+        if let Some(e) = Self::no_display() {
+            return e;
+        }
+        let mut io = flows::DeviceIo;
+        if let Some(e) = self.pin_refusal() {
+            return e;
+        }
+        let reply = match flows::check_pin(&mut io, &mut self.store, "Your PIN, to show the recovery words") {
+            flows::PinOk::Right => {
+                let m = mnemonic_from_entropy(self.wallet.entropy());
+                if flows::show_phrase(&mut io, &m) { protocol::response(Status::Ok, b"shown") } else { Self::cancelled() }
+            }
+            r => Self::pin_failure(r),
+        };
+        self.refresh_idle(self.idle_account);
+        reply
+    }
+
+    /// RESTORE: 24 words entered on the device replace the seed.
+    fn restore(&mut self) -> Vec<u8> {
+        if let Some(e) = Self::no_display() {
+            return e;
+        }
+        let mut io = flows::DeviceIo;
+        let reply = match flows::restore(&mut io) {
+            Some(m) => {
+                let (bytes, len) = m.to_entropy_array();
+                if len != 32 {
+                    protocol::error(Status::BadRequest, "only 24-word phrases")
+                } else {
+                    let mut e = zeroize::Zeroizing::new([0u8; 32]);
+                    e.copy_from_slice(&bytes[..32]);
+                    if self.install_entropy(e, storage::SeedOrigin::Restored) {
+                        io.result(Tone::Good, "RESTORED", vec!["Your wallet is back".into()]);
+                        protocol::response(Status::Ok, b"restored")
+                    } else {
+                        io.result(Tone::Bad, "FAILED", vec!["Couldn't store the seed".into()]);
+                        protocol::error(Status::StoreFailed, "could not store the restored seed")
+                    }
+                }
+            }
+            None => Self::cancelled(),
+        };
+        self.home = None;
+        self.refresh_idle(0);
+        reply
+    }
+
+    /// WIPE: erase the wallet, make a new one and a new PIN.
+    fn wipe(&mut self) -> Vec<u8> {
+        if let Some(e) = Self::no_display() {
+            return e;
+        }
+        let mut io = flows::DeviceIo;
+        let reply = if flows::confirm_wipe(&mut io) {
+            self.new_wallet(&mut io);
+            protocol::response(Status::Ok, b"wiped: new wallet")
+        } else {
+            Self::cancelled()
+        };
+        self.home = None;
+        self.refresh_idle(0);
+        reply
+    }
+
+    /// Refuse before anything is shown: no PIN yet, or signing locked.
+    fn pin_refusal(&mut self) -> Option<Vec<u8>> {
+        if !storage::pin_is_set(&mut self.store) {
+            return Some(protocol::error(Status::NoPin, "no signing PIN yet: set one first (the companion's setup, or SET_PIN)"));
+        }
+        (storage::pin_tries_left(&mut self.store) == 0)
+            .then(|| protocol::error(Status::PinLocked, "PIN locked after 5 wrong tries: reset it with your 24 recovery words"))
+    }
+
+    fn pin_failure(r: flows::PinOk) -> Vec<u8> {
+        match r {
+            flows::PinOk::Wrong(n) => protocol::error(Status::Rejected, &format!("wrong PIN ({n} tries left): nothing was signed")),
+            flows::PinOk::Locked => {
+                protocol::error(Status::PinLocked, "PIN locked after 5 wrong tries: reset it with your 24 recovery words")
+            }
+            _ => protocol::error(Status::Rejected, "no PIN entered: nothing was signed"),
+        }
+    }
+
+    /// PASSPHRASE: switch to the wallet of the 24 words plus a passphrase (until restart).
+    fn passphrase(&mut self) -> Vec<u8> {
+        if let Some(e) = Self::no_display() {
+            return e;
+        }
+        let mut io = flows::DeviceIo;
+        let reply = match flows::passphrase(&mut io) {
+            Some(p) => {
+                let entropy = *self.wallet.entropy();
+                self.wallet = Wallet::new(&entropy, &p);
+                self.security.passphrase = !p.is_empty();
+                drop(zeroize::Zeroizing::new(p));
+                io.result(
+                    Tone::Good,
+                    if self.security.passphrase { "PASSPHRASE" } else { "STANDARD" },
+                    vec![if self.security.passphrase { "Passphrase wallet in use".into() } else { "Standard wallet in use".into() }],
+                );
+                protocol::response(Status::Ok, &[self.security.passphrase as u8])
+            }
+            None => Self::cancelled(),
+        };
+        self.home = None;
+        self.refresh_idle(0);
+        reply
+    }
+
+    fn info(&mut self) -> Vec<u8> {
+        fn approval_text() -> String {
+            #[cfg(all(target_os = "xous", feature = "panel"))]
+            return format!("the panel and button on the board (panel: {})", panel::status());
+            #[allow(unreachable_code)]
+            if ui::Ui::enabled() {
+                "virtual display (vdisplay; dev only, the laptop draws the screen)".into()
+            } else {
+                "none: signing is refused".into()
+            }
+        }
+        let state = if cfg!(target_os = "xous") {
+            format!("keystore slots, PIN attempts in one-way counter {}", storage::PIN_OWC)
+        } else {
+            "host file (emulator, not secret, not one-way)".into()
+        };
+        let text = format!(
+            "{VERSION}\nseed: {} (TRNG entropy, keystore slots {}..={})\nstate: {state}\nscheme: QoreChain hybrid: secp256k1 + ML-DSA-87 (FIPS 204), on the CPU\nbutton: one; a tap is 0 / reject, a hold of {} ms is 1 / approve\napproval: {}\nfault checks: each signature verified with its public key before release\n{}",
+            match self.origin {
+                storage::SeedOrigin::Created => "created on this boot",
+                storage::SeedOrigin::Loaded => "loaded from the keystore",
+                storage::SeedOrigin::Replaced => "NEW: the stored seed no longer unwraps on this chip",
+                storage::SeedOrigin::Restored => "restored from 24 words on this device",
+            },
+            storage::SEED_SLOT,
+            storage::WRAP_SLOT + 1,
+            ui::HOLD_MS,
+            approval_text(),
+            self.security.describe(),
+        );
+        protocol::response(Status::Ok, text.as_bytes())
+    }
+
+    /// BIO_SELFTEST: the BIO display and button engines against the BIO test cores.
+    fn bio_selftest() -> Vec<u8> {
+        #[cfg(all(target_os = "xous", not(feature = "panel")))]
+        {
+            let (ok, report) = bioio::selftest();
+            log::info!("BIO self-test:\n{report}");
+            return protocol::response(if ok { Status::Ok } else { Status::SigningFailed }, report.as_bytes());
+        }
+        #[allow(unreachable_code)]
+        protocol::error(Status::NoHardware, "BIO self-test: on the board only, and not in a panel build (the panel owns the pins)")
+    }
+}
+
