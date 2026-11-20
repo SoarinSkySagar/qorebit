@@ -199,3 +199,196 @@ def apply_snapshot(screen, p):
     screen.update(upd)
 
 
+def poll_screen(dev, screen, status):
+    while True:
+        try:
+            since = screen.get("seq") if screen.get("connected") and "frame" in screen else None
+            st, p = dev.call(CMD_DISPLAY_POLL, struct.pack(">I", since) if since is not None else b"")
+            if st == 0 and len(p) >= 14:
+                apply_snapshot(screen, p)
+                status.pop("error", None)
+            else:
+                status["error"] = f"device answered {st}: {p[:60]!r}"
+        except Exception as e:
+            screen.update(connected=False)
+            screen.pop("frame", None)
+            status["error"] = f"device: {e}"
+            time.sleep(1)
+        time.sleep(POLL_S)
+
+
+def frame_to_surface(pygame, frame):
+    """Palette indices -> an 8-bit surface with the chip's palette."""
+    surf = pygame.image.frombuffer(frame["px"], (frame["w"], frame["h"]), "P")
+    surf.set_palette(frame["palette"])
+    return surf
+
+
+# ---------------------------------------------------------------- HTTP API for browsers
+
+class DeviceError(Exception):
+    def __init__(self, status, text):
+        super().__init__(text)
+        self.status = status
+
+
+def poll_result(dev):
+    """CMD_RESULT, riding out a short USB drop (pressing PROG on the Dabao can disconnect USB
+    for a moment): the job keeps running on the chip and its reply waits there."""
+    for attempt in range(25):
+        try:
+            return dev.call(CMD_RESULT)
+        except Exception:
+            time.sleep(0.4)  # Device reopens the link on the next call
+    return dev.call(CMD_RESULT)
+
+
+def call_job(dev, cmd, payload=b"", wait=180):
+    """Run a device command to completion, following PENDING / BUSY."""
+    st, p = dev.call(cmd, payload)
+    deadline = time.time() + wait
+    while st in (PENDING, BUSY) and time.time() < deadline:
+        time.sleep(0.2)
+        if st == BUSY:  # another job is running: wait for it, then send ours
+            st2, _ = poll_result(dev)
+            if st2 not in (PENDING, BUSY):
+                st, p = dev.call(cmd, payload)
+            continue
+        st, p = poll_result(dev)
+    if st != 0:
+        raise DeviceError(st, f"{STATUS_TEXT.get(st, 'error ' + str(st))}: {p.decode(errors='replace')}")
+    return p
+
+
+def unhex(h):
+    return bytes.fromhex(h[2:] if h.startswith("0x") else h)
+
+
+def acct(params):
+    return struct.pack(">I", int(params.get("account", 0)))
+
+
+SEED_STORAGE = {0: "plain", 1: "wrapped", 2: "hostfile"}
+
+
+def decode_security(p):
+    """CMD_GET_SECURITY: the chip's lifecycle counters, PIN and wallet state."""
+    if len(p) < 13 or p[0] != 2:
+        raise DeviceError(1, "unknown security report format")
+    attacks, = struct.unpack(">I", p[5:9])
+    return {"chip": bool(p[1]), "developerMode": bool(p[2]), "paranoid": bool(p[3]), "requirePq": bool(p[4]),
+            "possibleAttacks": attacks, "seedStorage": SEED_STORAGE.get(p[9], "unknown"),
+            "pinSet": bool(p[10]), "pinTriesLeft": p[11], "passphrase": bool(p[12]),
+            "firmware": p[13:].decode(errors="replace")}
+
+
+def api(dev, method, params):
+    # the signing PIN: choose / change it, or reset it with the recovery words (on the device)
+    if method == "device.setPin":
+        call_job(dev, CMD_SET_PIN, wait=900)
+        return {"pinSet": True}
+    if method == "device.resetPin":
+        call_job(dev, CMD_RESET_PIN, wait=3600)
+        return {"pinSet": True}
+    if method == "device.info":
+        return {"text": call_job(dev, CMD_INFO).decode(errors="replace")}
+    if method == "device.security":
+        return decode_security(call_job(dev, CMD_SECURITY))
+    # recovery flows run on the device's screen and button; nothing secret comes back
+    if method == "device.showPhrase":
+        call_job(dev, CMD_SHOW_PHRASE, wait=900)
+        return {"shown": True}
+    if method == "device.restore":
+        call_job(dev, CMD_RESTORE, wait=3600)
+        return {"restored": True}
+    if method == "device.wipe":
+        call_job(dev, CMD_WIPE, wait=900)
+        return {"wiped": True}
+    if method == "device.passphrase":
+        p = call_job(dev, CMD_PASSPHRASE, wait=1800)
+        return {"passphrase": bool(p[:1] == b"\x01")}
+    if method == "device.status":
+        call_job(dev, CMD_VERSION)
+        return {}
+    if method == "device.account":
+        p = call_job(dev, CMD_ACCOUNT, acct(params))
+        return {"address": "0x" + p[:20].hex(), "publicKey": "0x" + p[20:53].hex(), "bech32": p[53:].decode()}
+    if method == "device.pqPublicKey":
+        p = call_job(dev, CMD_PQ_PUBKEY, acct(params))
+        return {"publicKey": "0x" + p[:PQ_PK_LEN].hex()}
+    if method == "device.home":
+        # the home screen: balance (uqor) + address + network; the device checks the address against its key
+        chain, addr = params["chainId"].encode(), params["address"].encode()
+        body = (acct(params) + int(params["balance"]).to_bytes(16, "big") + bytes([len(chain)]) + chain
+                + bytes([len(addr)]) + addr)
+        p = call_job(dev, CMD_SET_HOME, body)
+        return {"addressChecked": {0: False, 1: True}.get(p[0]) if p else None}
+    if method == "device.registerProof":
+        chain = params["chainId"].encode()
+        p = call_job(dev, CMD_REGISTER_PROOF, acct(params) + bytes([len(chain)]) + chain, wait=900)
+        ms, = struct.unpack(">I", p[:4])
+        return {"ms": ms, "proof": "0x" + p[4:4 + PQ_SIG_LEN].hex()}
+    if method == "device.signTx":
+        chain = params["chainId"].encode()
+        body, auth = unhex(params["body"]), unhex(params["authInfo"])
+        flags = ((FLAG_CLASSICAL_ONLY if params.get("classicalOnly") else 0)
+                 | (FLAG_INCLUDE_PQ_KEY if params.get("includePublicKey") else 0)
+                 | (FLAG_SIGN_BYTES_V1 if params.get("signBytes") == "v1" else 0))
+        req = (acct(params) + bytes([flags]) + struct.pack(">Q", int(params["accountNumber"])) + bytes([len(chain)]) + chain
+               + struct.pack(">I", len(body)) + body + auth)
+        p = call_job(dev, CMD_SIGN_TX, req, wait=900)
+        ms, n = struct.unpack(">II", p[:8])
+        tx = p[8:8 + n]
+        rest = p[8 + n:]
+        return {"ms": ms, "txBytes": "0x" + tx.hex(), "classicalSignature": "0x" + rest[:64].hex(),
+                "pqSignature": ("0x" + rest[64:64 + PQ_SIG_LEN].hex()) if len(rest) >= 64 + PQ_SIG_LEN else None}
+    raise DeviceError(1, f"unknown method {method}")
+
+
+def allowed_origin(origin):
+    if not origin:
+        return None
+    for host in ("http://localhost", "http://127.0.0.1"):
+        if origin == host or origin.startswith(host + ":"):
+            return origin
+    return None
+
+
+def load_networks():
+    with open(os.path.join(ROOT, "tools", "networks.json")) as f:
+        return json.load(f)
+
+
+NETWORKS = load_networks()
+# what the browser may ask a chain endpoint for through /proxy: reads and the broadcast, nothing else
+PROXY_PREFIXES = {"rest": ("/cosmos/", "/qorechain/", "/cosmwasm/"), "rpc": ("/status", "/abci_info", "/block", "/tx")}
+MAX_PROXY_BODY = 256 * 1024
+
+
+def proxy(method, net, kind, rest, body):
+    """Forward one request to the chosen network's REST or RPC endpoint (an allowlist of three)."""
+    n = NETWORKS.get(net)
+    if n is None or kind not in ("rest", "rpc"):
+        return 404, b'{"error":"unknown network"}'
+    if method not in ("GET", "POST") or not rest.startswith(PROXY_PREFIXES[kind]):
+        return 403, b'{"error":"not allowed through the bridge"}'
+    req = urllib.request.Request(n[kind].rstrip("/") + rest, data=body if method == "POST" else None, method=method,
+                                 headers={"Content-Type": "application/json", "User-Agent": "qorebit-bridge"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:
+        return 502, json.dumps({"error": f"{net} {kind} unreachable: {e}"}).encode()
+
+
+def fund_devnet(address, amount):
+    """Send test QOR from the local devnet's faucet (devnet/fund.mjs signs as a software wallet)."""
+    out = subprocess.run(["node", os.path.join(ROOT, "tools", "fund.mjs"), address, str(amount)],
+                         capture_output=True, text=True, timeout=120, cwd=os.path.join(ROOT, "tools"))
+    if out.returncode != 0:
+        raise DeviceError(1, (out.stderr or out.stdout).strip()[-400:])
+    return {"result": out.stdout.strip()}
+
+
