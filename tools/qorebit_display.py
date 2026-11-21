@@ -392,3 +392,215 @@ def fund_devnet(address, amount):
     return {"result": out.stdout.strip()}
 
 
+def serve_http(dev, port, status):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _headers(self, code, origin, ctype="application/json"):
+            self.send_response(code)
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Headers", "content-type")
+                self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+            self.send_header("Content-Type", ctype)
+            self.end_headers()
+
+        def _origin_ok(self):
+            origin = self.headers.get("Origin")
+            ok = allowed_origin(origin)
+            if origin and not ok:
+                self._headers(403, None)
+                self.wfile.write(b'{"error":"origin not allowed"}')
+                return None
+            return ok or ""
+
+        def do_OPTIONS(self):
+            self._headers(204, allowed_origin(self.headers.get("Origin")))
+
+        def _proxy(self, method):
+            ok = self._origin_ok()
+            if ok is None:
+                return
+            parts = self.path.split("/", 4)  # '', 'proxy', net, kind, rest
+            if len(parts) < 5:
+                self._headers(404, ok)
+                self.wfile.write(b'{"error":"use /proxy/<network>/<rest|rpc>/<path>"}')
+                return
+            body = self.rfile.read(min(int(self.headers.get("Content-Length", 0)), MAX_PROXY_BODY)) if method == "POST" else b""
+            code, data = proxy(method, parts[2], parts[3], "/" + parts[4], body)
+            self._headers(code, ok)
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path.startswith("/proxy/"):
+                return self._proxy("GET")
+            ok = self._origin_ok()
+            if ok is None:
+                return
+            self._headers(200, ok)
+            if self.path.startswith("/networks"):
+                self.wfile.write(json.dumps({k: {x: v for x, v in n.items() if x not in ("rest", "rpc")} for k, n in NETWORKS.items()}).encode())
+            else:
+                self.wfile.write(json.dumps({"qorebit": "bridge", "device": "connected" if status.get("connected") else "?"}).encode())
+
+        def do_POST(self):
+            if self.path.startswith("/proxy/"):
+                return self._proxy("POST")
+            ok = self._origin_ok()
+            if ok is None:
+                return
+            try:
+                req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if self.path.startswith("/devnet/fund"):
+                    result = fund_devnet(str(req["address"]), int(req.get("amount", 1_000_000_000)))
+                else:
+                    result = api(dev, req.get("method", ""), req.get("params", {}))
+                self._headers(200, ok)
+                self.wfile.write(json.dumps({"result": result}).encode())
+            except DeviceError as e:
+                self._headers(200, ok)
+                self.wfile.write(json.dumps({"error": {"code": e.status, "message": str(e)}}).encode())
+            except Exception as e:
+                self._headers(500, ok)
+                self.wfile.write(json.dumps({"error": {"code": -1, "message": str(e)}}).encode())
+
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+
+
+# ---------------------------------------------------------------- window
+
+def run_window(dev, screen, status, title):
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+    import pygame
+
+    pygame.init()
+    PW = PH = 240 * SCALE
+    W, H = PW + 80, PH + 200
+    win = pygame.display.set_mode((W, H))
+    pygame.display.set_caption(title)
+    clock = pygame.time.Clock()
+
+    label = pygame.font.SysFont("dejavusansmono,monospace", 18, bold=True)
+    small = pygame.font.SysFont("dejavusans,sans", 13)
+    cache = {"frame": None, "surf": None}
+
+    ox, oy = (W - PW) // 2, 40
+    btn = pygame.Rect(ox + PW // 2 - 110, oy + PH + 28, 220, 70)
+    flash = {"text": "", "until": 0}
+    down = {"at": None}          # when the button went down (None: up)
+
+    def press(held_ms):
+        if screen.get("kind") not in (1, 3, 4):  # approval, PIN, other input
+            return
+        try:
+            st, p = dev.call(CMD_DISPLAY_INPUT, struct.pack(">II", screen["id"], held_ms))
+            if st == 0 and len(p) >= 14:
+                apply_snapshot(screen, p)  # the chip's new screen, in the same round trip
+            else:
+                flash.update(text=p.decode(errors="replace"), until=time.time() + 2)
+        except Exception as e:
+            status["error"] = f"device: {e}"
+
+    def release():
+        if down["at"] is not None:
+            held = int((time.time() - down["at"]) * 1000)
+            down["at"] = None
+            press(held)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit()
+                return
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and btn.collidepoint(ev.pos):
+                down["at"] = time.time()
+            if ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+                release()
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_SPACE and down["at"] is None:
+                    down["at"] = time.time()
+                elif ev.key == pygame.K_ESCAPE:
+                    press(0)
+            if ev.type == pygame.KEYUP and ev.key == pygame.K_SPACE:
+                release()
+
+        hold_ms = screen.get("hold_ms") or DEFAULT_HOLD_MS
+        live = screen.get("kind") in (1, 3, 4)
+        held = int((time.time() - down["at"]) * 1000) if down["at"] is not None else 0
+        # device body: a dark enclosure around the panel
+        win.fill((14, 15, 18))
+        body = pygame.Rect(16, 16, W - 32, H - 70)
+        pygame.draw.rect(win, (32, 34, 40), body, border_radius=26)
+        pygame.draw.rect(win, (54, 58, 66), body, width=2, border_radius=26)
+
+        # the panel: the chip's framebuffer, pixel for pixel
+        pygame.draw.rect(win, (0, 0, 0), (ox - 8, oy - 8, PW + 16, PH + 16), border_radius=6)
+        fr = screen.get("frame") if screen.get("connected") else None
+        if fr is not None:
+            if fr is not cache["frame"]:
+                cache.update(frame=fr, surf=pygame.transform.scale(frame_to_surface(pygame, fr), (PW, PH)))
+            win.blit(cache["surf"], (ox, oy))
+        else:
+            t = label.render("no device", True, (110, 114, 124))
+            win.blit(t, t.get_rect(center=(W // 2, oy + PH // 2)))
+
+        # the one button: it fills while held, and turns green once a release would approve
+        base = (200, 204, 212) if live else (70, 74, 82)
+        long = held >= hold_ms
+        if down["at"] is not None and live:
+            base = (46, 224, 122) if long else (255, 179, 31)
+        pygame.draw.rect(win, tuple(v // 5 for v in base), btn, border_radius=34)
+        if down["at"] is not None and live:
+            fill = pygame.Rect(btn.x, btn.y, int(btn.w * min(1.0, held / hold_ms)), btn.h)
+            pygame.draw.rect(win, tuple(v // 2 for v in base), fill, border_radius=34)
+        pygame.draw.rect(win, base, btn, width=3, border_radius=34)
+        text = ("RELEASE = APPROVE" if long else "RELEASE = REJECT") if down["at"] is not None and live else "TAP  /  HOLD"
+        t = label.render(text, True, base)
+        win.blit(t, t.get_rect(center=btn.center))
+        keys = small.render(f"tap = 0 / reject      hold {hold_ms / 1000:.1f} s = 1 / approve      (Space or mouse)", True, (110, 114, 124))
+        win.blit(keys, keys.get_rect(midtop=(W // 2, btn.bottom + 8)))
+        dot = (46, 224, 122) if screen.get("connected") else (255, 74, 74)
+        pygame.draw.circle(win, dot, (W - 40, 30), 5)
+
+        # footer
+        msg = flash["text"] if time.time() < flash["until"] else status.get("error", "")
+        foot = "Dev mode: pixels come from the chip, the button from this laptop. Not secure."
+        win.blit(small.render(foot, True, (255, 179, 31)), (24, H - 44))
+        if msg:
+            win.blit(small.render(msg[:90], True, (230, 230, 230)), (24, H - 26))
+        elif screen.get("connected") and not screen.get("vdisplay", True):
+            win.blit(small.render("firmware built without --vdisplay", True, (255, 74, 74)), (24, H - 26))
+        pygame.display.flip()
+        clock.tick(30)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--emu", action="store_true", help="use the emulator (127.0.0.1:7610) instead of USB HID")
+    ap.add_argument("--emu-port", type=int, default=7610)
+    ap.add_argument("--listen", type=int, default=7620, help="bridge port for other tools (raw frames)")
+    ap.add_argument("--http", type=int, default=7630, help="HTTP API for the companion app")
+    ap.add_argument("--headless", action="store_true",
+                    help="no window: only the bridge (for scripted tests; answer through DISPLAY_INPUT)")
+    a = ap.parse_args()
+
+    dev = Device(a.emu_port if a.emu else None)
+    screen, status = {"connected": False}, {}
+    threading.Thread(target=serve_clients, args=(dev, a.listen, status), daemon=True).start()
+    threading.Thread(target=poll_screen, args=(dev, screen, status), daemon=True).start()
+    threading.Thread(target=serve_http, args=(dev, a.http, screen), daemon=True).start()
+    print(f"Qorebit virtual display: device {'emulator :' + str(a.emu_port) if a.emu else 'USB HID'}; "
+          f"tools connect to 127.0.0.1:{a.listen}, the companion to http://127.0.0.1:{a.http}")
+    if a.headless:
+        # Ctrl+C must stop it even if it was started with SIGINT ignored (e.g. from a script)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        print("headless: no window; screens are still served on DISPLAY_POLL", flush=True)
+        while True:
+            time.sleep(3600)
+    run_window(dev, screen, status, f"Qorebit device ({'emulator' if a.emu else 'Dabao'})")
+
+
+if __name__ == "__main__":
+    main()
