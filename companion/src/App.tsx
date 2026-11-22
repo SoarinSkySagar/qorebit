@@ -271,3 +271,53 @@ export function App() {
   );
 }
 
+function Header(p: { net: NetworkId; networks: Record<NetworkId, NetworkInfo>; onNet: (n: NetworkId) => void; bridge: boolean | null; security: Security | null }) {
+  return (
+    <header>
+      <div className="brand"><span className="mark" aria-hidden />QOREBIT</div>
+      <div className="seg" role="radiogroup" aria-label="Network">
+        {NETWORK_IDS.map((id) => (
+          <button key={id} role="radio" aria-checked={p.net === id} className={`${p.net === id ? "on" : ""} ${id}`} onClick={() => p.onNet(id)} title={p.networks[id].chainId}>
+            {p.networks[id].name}
+          </button>
+        ))}
+      </div>
+      <div className="chip-row">
+        <span className="chain-id mono">{p.networks[p.net].chainId}</span>
+        <span className={`dot ${p.bridge && p.security ? "ok" : "bad"}`} aria-hidden />
+        <span className="muted small">{p.bridge === null ? "…" : !p.bridge ? "no bridge" : p.security ? (p.security.chip ? "Dabao" : "emulator") : "no device"}</span>
+      </div>
+    </header>
+  );
+}
+
+function BridgeDown() {
+  return (
+    <section className="card center">
+      <h2>The bridge is not running</h2>
+      <p className="muted">The wallet talks to the device and to the networks through a small local program.</p>
+      <pre className="code">make web          # the board, a window for its screen, and this site
+make web-emu      # the same on the emulator</pre>
+    </section>
+  );
+}
+
+function DeviceDown({ message }: { message: string }) {
+  return (
+    <section className="card center">
+      <h2>No device answers</h2>
+      <p className="muted">{message}</p>
+      <p className="muted small">Plug the Dabao in (or start the emulator). The page checks again every few seconds.</p>
+    </section>
+  );
+}
+
+function ButtonLegend() {
+  return (
+    <div className="legend" aria-label="The device's one button">
+      <div><b>TAP</b><span>= 0 · reject</span></div>
+      <div><b>HOLD</b><span>= 1 · approve</span></div>
+    </div>
+  );
+}
+
