@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "companion", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--prefix", "companion"], "port": 5173 }
+  ]
+}
