@@ -110,6 +110,17 @@ fn short(s: &str) -> String {
     }
 }
 
+/// A coin denom on one line: `erc20:0x9714..63CA` for a token, the start and end of anything else long.
+fn denom_text(d: &str) -> String {
+    if d.len() <= 18 {
+        d.to_string()
+    } else if d.starts_with("erc20:") {
+        format!("{}..{}", &d[..12], &d[d.len() - 4..])
+    } else {
+        format!("{}..{}", &d[..8], &d[d.len() - 6..])
+    }
+}
+
 fn coins_text(coins: &[tx::Coin]) -> String {
     if coins.is_empty() {
         "none".into()
@@ -139,7 +150,23 @@ fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen:
             rows.push(Row::Addr("To", to.clone()));
             let big = (amount.len() == 1).then(|| big_qor(&amount[0])).flatten();
             if big.is_none() {
-                rows.push(Row::Kv("Amount", coins_text(amount)));
+                if amount.is_empty() {
+                    rows.push(Row::Kv("Amount", "none".into()));
+                }
+                for c in amount {
+                    if c.denom == "uqor" {
+                        rows.push(Row::Kv("Amount", c.pretty()));
+                    } else {
+                        // any other coin (a token): its raw amount in the token's smallest unit, and the coin on its own
+                        // row, so that a long denom can never push the amount off the screen
+                        if c.amount.len() > 22 {
+                            rows.push(Row::Text(format!("Amount {}", c.amount)));
+                        } else {
+                            rows.push(Row::Kv("Amount", c.amount.clone()));
+                        }
+                        rows.push(Row::Kv("Token", denom_text(&c.denom)));
+                    }
+                }
             }
             rows.push(from);
             ("SEND", "Send", big)

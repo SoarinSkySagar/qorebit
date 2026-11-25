@@ -919,6 +919,10 @@ mod tests {
         };
         let shots = [
             ("16-send-to-a-long-address", Screen::Approval(to_msig), 55),
+            ("18-send-token", Screen::Approval(Approval { tag: "SEND", heading: "Send", big: None, rows: vec![
+                Row::Addr("To", "qor19ltfv6u4sfx6hz0veu6p80r69pleufhmvn2zmk".to_string()),
+                Row::Kv("Amount", "1000000".into()), Row::Kv("Token", "erc20:0x9714..63CA".into()),
+                Row::Kv("From", "Account 1".into()), Row::Kv("Max fee", "0.02 QOR".into()), Row::Kv("Network", "qorechain-diana".into())] }), 55),
             ("17-multisig", Screen::Approval(Approval { tag: "MULTISIG", heading: "Multisig transaction", big: None, rows: vec![Row::Kv("Action", "Vote".into()), Row::Warn("Details: see website".into()), Row::Kv("Size / id", "112 bytes / 9f3a01c2".into()), Row::Kv("From", "Account 1".into()), Row::Kv("Max fee", "0.02 QOR".into()), Row::Kv("Network", "qorechain-diana".into())] }), 55),
             ("1-idle", Screen::Idle { account: 0, home: demo_home(), trust: crate::security::Trust::Secure, passphrase: false }, 0),
             ("2-send", Screen::Approval(send), 47),

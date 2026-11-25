@@ -11,6 +11,7 @@
     "test": "node --experimental-strip-types --test test/*.test.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "@qorechain/pqc": "0.2.3",
     "@qorechain/qoresign": "0.2.0",
     "cosmjs-types": "0.11.0",

@@ -32,6 +32,13 @@ post-quantum key** once per account and network, then send.
 
 With Claude Code, run **`/setup`** (or `/setup emu`): it does the steps above and waits for you at the PIN.
 
+### Tokens
+
+The companion lists the tokens on the selected network (on the testnet: the test tokens fUSD, fETH, fBTC), adds any token by
+contract address or coin denom after asking the chain about it, and sends them. A token transfer is an ordinary bank transfer
+signed on the device, which shows the amount in the token's smallest unit and the coin name on separate rows (see
+[walkthrough.md](walkthrough.md), section 6b).
+
 ### Multisig
 
 Shared accounts ("N of M must agree") use QoreChain's group module, so the board needs nothing special: creating a

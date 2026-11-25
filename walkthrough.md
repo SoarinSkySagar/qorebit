@@ -87,6 +87,20 @@ What it can do: only talk to the local bridge (`http://127.0.0.1:7630`); it asks
 `extension/manifest.json`), not by a pattern, so another extension cannot use the device. Approval of every transaction
 still happens on the device.
 
+## 6b. Tokens
+
+The **Tokens** card lists tokens on the selected network that you hold or have added, with balances, and sends them. A token on
+QoreChain is an ERC-20 contract shown in the bank module as a coin called `erc20:0x<contract address>`; the chain describes it
+(symbol, name, decimals), so the app only needs the address. On the **Testnet** tab the three test tokens are listed by default:
+**fUSD** (6 decimals), **fETH** (18) and **fBTC** (8), which the testnet faucet gives you.
+
+- **Add a token:** *Add a token*, paste its contract address (`0x…`, any casing) or a coin denom (for example an `ibc/…` coin).
+  The chain is asked first and only a coin that exists is added. The list is kept in this browser, per network. *Tokens this network
+  lists* shows everything the chain describes, one click to add.
+- **Send a token:** *Send*, who gets it and how much. It is an ordinary transfer signed on the device; the network fee is paid in QOR.
+- **On the board:** the screen shows `Amount` in the token's **smallest unit** (1 fUSD is `1000000`) and `Token` as a short coin name
+  (`erc20:0x9714..63CA`), with the recipient and the fee. The website tells you the number to expect before you approve.
+
 ## 6c. Multisig (shared accounts)
 
 A **multisig** is an account owned by several people, where moving funds needs "N of M" of them to agree. QoreChain does it

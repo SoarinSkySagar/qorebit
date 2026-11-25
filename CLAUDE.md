@@ -55,6 +55,14 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 - The Keccak engines (combohash, BIO) are gone: ML-DSA on the CPU is the fast path. BIO is only for the panel.
 - Stop processes by exact PID / process group only, never broad `pkill -f` patterns.
 
+## Tokens
+
+- A token is a bank coin `erc20:0x<contract, EIP-55 casing>` (the chain's denom metadata gives symbol, name and decimals: the largest
+  `denom_units` exponent). Sending one is a plain `MsgSend`. `companion/src/tokens.ts`, `tokenUnits.ts`, `Tokens.tsx`.
+- The board shows a non-QOR coin as two rows: `Amount` (raw, smallest unit) and `Token` (`denom_text`, e.g. `erc20:0x9714..63CA`); before
+  this, a long denom pushed the amount off the left edge of the screen. QOR sends are unchanged.
+- Verified on the testnet: 1 fUSD, 0.001 fETH and 0.0001 fBTC sent from account 1 to account 2.
+
 ## Multisig (the chain's group module): companion only
 
 - The board only labels multisig: any `/cosmos.group.v1.*` message shows a MULTISIG screen with the action name and "Details: check the

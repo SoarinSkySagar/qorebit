@@ -6,6 +6,7 @@ import {
   type Activity, type ChainAccount,
 } from "./chain";
 import { MultisigCard } from "./Multisig";
+import { TokensCard } from "./Tokens";
 import { DEFAULT_NETWORKS, NETWORK_IDS, type NetworkId, type NetworkInfo } from "./networks";
 import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg } from "./tx";
 
@@ -312,6 +313,8 @@ export function App() {
                 <SendCard disabled={!!wait || !security.pinSet || !pqRegistered || !chainAcct} balance={balance} info={info} onSend={send} why={
                   !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""
                 } />
+                <TokensCard net={net} info={info} acct={acct} qor={balance} onSubmit={submit}
+                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""} />
                 <MultisigCard
                   net={net} info={info} acct={acct} onSubmit={submit}
                   why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""}

@@ -277,6 +277,15 @@ try {
     check((await balance(rest, pol.address)) === polBefore - 2_500_000n, "the multisig's balance went down by the same amount");
   }
 
+  // 8c. a token transfer (an `erc20:0x…` bank coin) is an ordinary MsgSend: signed like any transfer
+  {
+    const denom = "erc20:0x97143B771D34ddb9130b807b135Ae675A5a963CA"; // fUSD on the testnet
+    const tk = buildTx({ messages: [sendMsg(me, you, 1_000_000, denom)], publicKey: own, sequence: 7n });
+    const onDevice = await call("device.signTx", { account: 0, accountNumber: "9", chainId: "qorechain-diana", signBytes: "v2", body: toHex(tk.bodyBytes), authInfo: toHex(tk.authInfoBytes) });
+    const soft = signHybrid({ chainId: "qorechain-diana", accountNumber: 9, bodyBytes: tk.bodyBytes, authInfoBytes: tk.authInfoBytes, classicalKey: classical(0), pqKey: pq(0), signBytesVersion: "v2" });
+    check(onDevice.txBytes === "0x" + toHex(soft.txBytes), "a token transfer (an erc20: coin) is signed byte-identically to QoreSign's");
+  }
+
   // 9. other networks: the chain id is part of what is signed, and mainnet says so on the screen
   const main = buildTx({ messages: [sendMsg(me, you, 250_000_000)], publicKey: own, sequence: 5n });
   const onMain = await call("device.signTx", { account: 0, accountNumber: "9", chainId: "qorechain-vladi", signBytes: "v2", body: toHex(main.bodyBytes), authInfo: toHex(main.authInfoBytes) });
