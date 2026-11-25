@@ -38,6 +38,7 @@ export function App() {
   const [bridge, setBridge] = useState<boolean | null>(null);
   const [security, setSecurity] = useState<Security | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [deviceBusy, setDeviceBusy] = useState(false); // the device is waiting for a button press
   const [acct, setAcct] = useState<DeviceAccount | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [chainAcct, setChainAcct] = useState<ChainAccount | null | undefined>(undefined);
@@ -48,6 +49,7 @@ export function App() {
   const [notice, setNotice] = useState<{ tone: "good" | "bad" | "warn"; text: string } | null>(null);
   const info = networks[net];
   const alive = useRef(true);
+  const generation = useRef(0); // bumped whenever the account or network changes: older answers are dropped
 
   useEffect(() => {
     alive.current = true; // StrictMode mounts, unmounts and mounts again in development
@@ -72,9 +74,13 @@ export function App() {
     try {
       setSecurity(await device.security());
       setDeviceError(null);
+      setDeviceBusy(false);
     } catch (e) {
       // the device is busy with an approval or a PIN: keep what is shown, this poll will be answered next time
-      if (e instanceof DeviceError && e.code === 8) return;
+      if (e instanceof DeviceError && e.code === 8) {
+        setDeviceBusy(true);
+        return;
+      }
       setDeviceError(explain(e));
     }
   }, []);
@@ -94,6 +100,7 @@ export function App() {
   // the chain's view of it
   const refresh = useCallback(async () => {
     if (!acct) return;
+    const mine = generation.current;
     try {
       const [b, a, pq, act] = await Promise.all([
         getBalance(net, acct.bech32),
@@ -101,7 +108,7 @@ export function App() {
         pqStatus(net, acct.bech32).then((s) => s.registered),
         history(net, acct.bech32).catch(() => []),
       ]);
-      if (!alive.current) return;
+      if (!alive.current || mine !== generation.current) return; // the account or network changed meanwhile
       setBalance(b);
       setChainAcct(a);
       setPqRegistered(pq);
@@ -110,10 +117,11 @@ export function App() {
       // the device's home screen shows the same balance, address and network
       device.home(index, b, info.chainId, acct.bech32).catch(() => undefined);
     } catch (e) {
-      if (alive.current) setChainError(explain(e));
+      if (alive.current && mine === generation.current) setChainError(explain(e));
     }
   }, [acct, net, index, info.chainId]);
   useEffect(() => {
+    generation.current++;
     setBalance(null);
     setChainAcct(undefined);
     setPqRegistered(null);
@@ -140,6 +148,7 @@ export function App() {
     try {
       const a = needAccount();
       if (!chainAcct) throw new Error("this account does not exist on chain yet: send it some QOR first");
+      setWait({ what: "Register the key", hint: "Checking the network…" });
       await ensureChain();
       setWait({ what: "Prove your post-quantum key", hint: "Check the device: press the right button to approve, then your PIN." });
       // one after the other: the device runs one job at a time
@@ -173,6 +182,8 @@ export function App() {
       const a = needAccount();
       if (!chainAcct) throw new Error("this account does not exist on chain yet");
       if (!pqRegistered) throw new Error("register the post-quantum key first: the chain refuses a transfer without it");
+      // feedback at once: the checks below talk to the network and can take a few seconds
+      setWait({ what: `Send ${formatQor(amount)} QOR`, hint: "Preparing the transaction: checking the network and the fee…" });
       await ensureChain();
       const classical = fromHex(a.publicKey);
       const msgs = [sendMsg(a.bech32, to, amount)];
@@ -244,6 +255,12 @@ export function App() {
       <main>
         {bridge === false && <BridgeDown />}
         {bridge && deviceError && <DeviceDown message={deviceError} />}
+        {bridge && deviceBusy && !deviceError && !security && (
+          <section className="card center">
+            <h2>The device is waiting for you</h2>
+            <p className="muted">Answer on the device (right button approves, left button rejects), then this page carries on.</p>
+          </section>
+        )}
         {ready && !security.pinSet && <PinSetup onSet={() => deviceAction("Set a signing PIN", "On the device: eight presses, left = 0, right = 1. Then once more to confirm.", device.setPin, "Signing PIN set.")} />}
         {notice && <div className={`notice ${notice.tone}`} role="status">{notice.text}</div>}
         {ready && (
@@ -405,14 +422,19 @@ function SendCard(p: { disabled: boolean; why: string; balance: bigint | null; i
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const parsed = useMemo(() => parseQor(amount), [amount]);
-  const toOk = isQorAddress(to.trim());
-  const problem = !to ? "" : !toOk ? "Not a valid qor1… address." : "";
+  // a pasted address may have spaces around it or be in capitals (valid bech32, only the case differs)
+  const addr = to.trim().replace(/\s+/g, "");
+  const norm = addr === addr.toUpperCase() ? addr.toLowerCase() : addr;
+  const toOk = isQorAddress(norm);
+  const problem = !to ? "" : !toOk ? "Not a valid qor1… address (check every character; no spaces)." : "";
   const amountProblem = !amount ? "" : parsed === null || parsed === 0n ? "An amount in QOR, up to 6 decimals." : p.balance !== null && parsed > p.balance ? "More than the balance." : "";
   const can = !p.disabled && toOk && parsed !== null && parsed > 0n && !amountProblem;
+  // why the button is off, so it never just looks dead
+  const needs = p.why || (!to ? "Enter the recipient's qor1… address." : !toOk ? "The address is not valid." : !amount ? "Enter an amount." : amountProblem || "");
   return (
     <section className="card">
       <h2>Send</h2>
-      <form onSubmit={async (e) => { e.preventDefault(); if (can && (await p.onSend(to.trim(), parsed!, memo))) { setTo(""); setAmount(""); setMemo(""); } }}>
+      <form onSubmit={async (e) => { e.preventDefault(); if (can && (await p.onSend(norm, parsed!, memo))) { setTo(""); setAmount(""); setMemo(""); } }}>
         <label>To<input className="mono" value={to} onChange={(e) => setTo(e.target.value)} placeholder="qor1…" spellCheck={false} autoComplete="off" /></label>
         {problem && <div className="field-error">{problem}</div>}
         <label>Amount (QOR)<input className="mono" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" inputMode="decimal" autoComplete="off" /></label>
@@ -420,7 +442,7 @@ function SendCard(p: { disabled: boolean; why: string; balance: bigint | null; i
         <label>Memo (optional)<input value={memo} maxLength={120} onChange={(e) => setMemo(e.target.value)} autoComplete="off" /></label>
         <div className="row">
           <button className="primary" type="submit" disabled={!can}>Review on the device</button>
-          <span className="muted small">{p.why || (p.info.real ? "Mainnet: real funds." : "Network fee about 0.02 QOR.")}</span>
+          <span className={`small ${can ? "muted" : "warn-text"}`}>{can ? (p.info.real ? "Mainnet: real funds." : "Network fee about 0.02 QOR.") : needs}</span>
         </div>
       </form>
       <ButtonLegend />

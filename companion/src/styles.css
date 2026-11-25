@@ -118,3 +118,5 @@ form input:focus { border-color: var(--addr); outline: none; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 pre.code { text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: inline-block; font-size: 13.5px; }
 footer { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 28px; }
+
+.warn-text { color: var(--amber); }

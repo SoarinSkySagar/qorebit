@@ -359,6 +359,24 @@ def api(dev, method, params):
     raise DeviceError(1, f"unknown method {method}")
 
 
+# Outgoing lookups ask for IPv4 first. On many networks the resolver waits about 4.5 s for the IPv6 (AAAA)
+# answer of QoreChain's public endpoints before it answers at all; a send makes several calls in a row.
+# Only if there is no IPv4 address does the original lookup run.
+_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_first(host, port, family=0, *args, **kwargs):
+    if family in (0, socket.AF_UNSPEC):
+        try:
+            return _getaddrinfo(host, port, socket.AF_INET, *args, **kwargs)
+        except socket.gaierror:
+            pass
+    return _getaddrinfo(host, port, family, *args, **kwargs)
+
+
+socket.getaddrinfo = _ipv4_first
+
+
 def _extension_origin():
     """The wallet browser extension's origin (its id is pinned by the key in extension/manifest.json)."""
     try:
