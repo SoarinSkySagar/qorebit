@@ -87,6 +87,23 @@ What it can do: only talk to the local bridge (`http://127.0.0.1:7630`); it asks
 `extension/manifest.json`), not by a pattern, so another extension cannot use the device. Approval of every transaction
 still happens on the device.
 
+## 6a. Sign in with QoreChain
+
+Log in to a website with your account instead of a password (QoreChain's standard, SIWQ). The site gives you a **message**
+("example.com wants you to sign in with your QoreChain account: qor1…", with a statement, the chain, a one-time nonce and times).
+In the **Sign in with QoreChain** card:
+
+1. Paste the site's message (or press *Make a test message* to try it). The card shows the same fields the board will.
+2. *Sign in with the device.* The board shows **SIGN IN**: the site, your account number, the network, when it expires and the
+   statement. Compare them, press the right button, enter your PIN.
+3. The card checks the result itself (both signatures, the site, the nonce, the chain, the time) and gives you the **signature**
+   (JSON) to paste back into the site. Nothing is sent from here.
+
+What the board will not sign: anything that is not exactly a sign-in message (not a transaction, not a digest, not free text),
+a sign-in for another account, a sign-in that lists *resources* (permissions its screen cannot show), a statement over 75
+characters or a site name over 44 (it shows them in full or not at all). A sign-in signature is two signatures: secp256k1 over
+the ADR-36 document and ML-DSA-87 over `qorechain-siwq-v1|` + the message, so it cannot be mistaken for a transaction signature.
+
 ## 6b. Tokens
 
 The **Tokens** card lists tokens on the selected network that you hold or have added, with balances, and sends them. A token on

@@ -12,7 +12,7 @@ import { mnemonicToEntropy, entropyToMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import {
   addressFromPublicKey, deriveCanonicalPqKey, deriveClassicalKey, signHybrid, pqVerify, verifyHybridTx, decodeTxRaw,
-  encodeAny, toHex, fromHex,
+  encodeAny, toHex, fromHex, createSiwqMessage, signSiwq, verifySiwq,
 } from "@qorechain/qoresign";
 import { broadcastTx, fetchPqKeyStatus, resolveSignBytesVersion } from "@qorechain/qoresign/network";
 import { accountInfo, balance, buildTx, restOf, sendMsg, waitTx } from "./qorelib.mjs";
@@ -284,6 +284,31 @@ try {
     const onDevice = await call("device.signTx", { account: 0, accountNumber: "9", chainId: "qorechain-diana", signBytes: "v2", body: toHex(tk.bodyBytes), authInfo: toHex(tk.authInfoBytes) });
     const soft = signHybrid({ chainId: "qorechain-diana", accountNumber: 9, bodyBytes: tk.bodyBytes, authInfoBytes: tk.authInfoBytes, classicalKey: classical(0), pqKey: pq(0), signBytesVersion: "v2" });
     check(onDevice.txBytes === "0x" + toHex(soft.txBytes), "a token transfer (an erc20: coin) is signed byte-identically to QoreSign's");
+  }
+
+  // 8d. Sign In With QoreChain: the device reads the message, shows it, signs both layers; QoreSign verifies them
+  {
+    const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(9))).toString("hex");
+    const now = new Date();
+    const fields = { domain: "app.example.com", scheme: "https", address: me, statement: "Sign in to Example", uri: "https://app.example.com/login", chainId: CHAIN_ID, nonce, issuedAt: now.toISOString(), expirationTime: new Date(now.getTime() + 600_000).toISOString() };
+    const message = createSiwqMessage(fields);
+    const sig = await call("device.signSiwq", { account: 0, message });
+    const b64 = (hex) => Buffer.from(fromHex(hex)).toString("base64");
+    const signature = { signatureType: "ml-dsa-87-hybrid", classical: { keyType: "secp256k1", publicKey: Buffer.from(classical(0).publicKey).toString("base64"), signature: b64(sig.classicalSignature) }, pq: { algorithmId: 1, signature: b64(sig.pqSignature) } };
+    const verified = verifySiwq({ message, signature, domain: "app.example.com", nonce, chainId: CHAIN_ID, pqPublicKey: pq(0).publicKey });
+    check(verified.address === me, "QoreSign verifies the device's sign-in (both signatures, domain, nonce, chain, expiry)");
+    const soft = signSiwq({ message, classicalKey: classical(0), pqKey: pq(0) });
+    check(soft.classical.signature === signature.classical.signature && soft.pq.signature === signature.pq.signature, "the device's sign-in signatures are byte-identical to QoreSign's");
+    // what the device refuses
+    const refuseSiwq = (what, msg, pattern, account = 0) => expectError(what, () => call("device.signSiwq", { account, message: msg }), pattern);
+    await refuseSiwq("a sign-in for another account is refused", createSiwqMessage({ ...fields, address: you }), /another account/);
+    await refuseSiwq("a sign-in that lists resources is refused", createSiwqMessage({ ...fields, resources: ["https://app.example.com/data"] }), /resources/);
+    await refuseSiwq("a statement too long to show in full is refused", createSiwqMessage({ ...fields, statement: "x".repeat(90) }), /too long/);
+    await refuseSiwq("free text is not a sign-in message", "please sign this", /not a Sign In With QoreChain message/);
+    await refuseSiwq("a transaction-looking blob is not a sign-in message", toHex(buildTx({ messages: [sendMsg(me, you, 1)], publicKey: own, sequence: 1n }).bodyBytes), /not a Sign In With QoreChain message/);
+    await refuseSiwq("a sign-in message with a changed layout is refused", message.replace("\n\n", "\n\n\n"), /not a Sign In With QoreChain message/);
+    script.approval.push(LEFT);
+    await expectError("the left button rejects a sign-in", () => call("device.signSiwq", { account: 0, message }), /rejected/);
   }
 
   // 9. other networks: the chain id is part of what is signed, and mainnet says so on the screen

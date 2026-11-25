@@ -12,6 +12,7 @@ extern crate std;
 
 pub mod keys;
 pub mod proto;
+pub mod siwq;
 pub mod tx;
 
 pub use bip39::{Language, Mnemonic};

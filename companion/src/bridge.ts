@@ -71,6 +71,9 @@ export const device = {
   account: (account: number) => rpc<DeviceAccount>("device.account", { account }),
   pqPublicKey: (account: number) => rpc<{ publicKey: string }>("device.pqPublicKey", { account }),
   registerProof: (account: number, chainId: string) => rpc<{ ms: number; proof: string }>("device.registerProof", { account, chainId }),
+  /** Sign In With QoreChain: the device reads the message itself, shows it, and signs both layers. */
+  signSiwq: (account: number, message: string) =>
+    rpc<{ ms: number; classicalSignature: string; pqSignature: string }>("device.signSiwq", { account, message }),
   signTx: (p: {
     account: number;
     accountNumber: bigint;

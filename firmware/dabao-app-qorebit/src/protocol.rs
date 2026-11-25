@@ -16,6 +16,7 @@
 //! | 0x04 | REGISTER_PROOF | account u32, chain id (len u8, UTF-8) | sign_ms u32, proof of possession (4,627): the account's ML-DSA key signs its own registration message for that chain (approval + PIN on the device) |
 //! | 0x05 | GET_INFO       | -                                 | UTF-8: seed origin, scheme, approval, chip security state |
 //! | 0x06 | SIGN_TX        | account u32, flags u8, account number u64, chain id (len u8, UTF-8), body len u32, TxBody, AuthInfo (rest) | sign_ms u32, TxRaw len u32, TxRaw, secp256k1 signature (64), ML-DSA-87 signature (4,627, absent in classical-only mode) |
+//! | 0x07 | SIGN_SIWQ      | account u32, the Sign In With QoreChain message (UTF-8, canonical form) | sign_ms u32, secp256k1 signature (64) over the ADR-36 document, ML-DSA-87 signature (4,627) over `qorechain-siwq-v1|` + message (approval + PIN on the device; only this account's sign-in, no resources, short statement) |
 //! | 0x13 | SET_HOME       | account u32, balance u128 (uqor), chain id (len u8), address (len u8, bech32) | checked u8 (1 the address is this device's, 0 it is not, 2 unknown) |
 //! | 0x09 | GET_SECURITY   | -                                 | version u8 (2), chip u8, developer u8, paranoid u8, require_pq u8, possible_attacks u32, seed storage u8 (0 plain, 1 wrapped with the chip key, 2 host file), pin_set u8, pin_tries_left u8, passphrase u8, firmware id (UTF-8 `git describe`) |
 //! | 0x0A | SHOW_PHRASE    | -                                 | "shown": the PIN again, then the 24 words on the device screen (never sent to the host) |
@@ -61,6 +62,7 @@ pub const CMD_GET_PQ_PUBLIC_KEY: u8 = 0x03;
 pub const CMD_REGISTER_PROOF: u8 = 0x04;
 pub const CMD_GET_INFO: u8 = 0x05;
 pub const CMD_SIGN_TX: u8 = 0x06;
+pub const CMD_SIGN_SIWQ: u8 = 0x07;
 pub const CMD_GET_SECURITY: u8 = 0x09;
 pub const CMD_SHOW_PHRASE: u8 = 0x0A;
 pub const CMD_RESTORE: u8 = 0x0B;

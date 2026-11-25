@@ -7,6 +7,7 @@ import {
 } from "./chain";
 import { MultisigCard } from "./Multisig";
 import { TokensCard } from "./Tokens";
+import { SignInCard } from "./SignIn";
 import { DEFAULT_NETWORKS, NETWORK_IDS, type NetworkId, type NetworkInfo } from "./networks";
 import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg } from "./tx";
 
@@ -251,6 +252,23 @@ export function App() {
     }
   }
 
+  /** Sign In With QoreChain: the device shows the site and the statement and signs both layers. */
+  async function signIn(message: string) {
+    setNotice(null);
+    try {
+      needAccount();
+      setWait({ what: "Sign in with QoreChain", hint: "Check the device screen: the site, the network and the statement. Right button approves, left button rejects." });
+      const r = await device.signSiwq(index, message);
+      setNotice({ tone: "good", text: "Signed on the device. Paste the signature into the site." });
+      return r;
+    } catch (e) {
+      setNotice({ tone: "bad", text: explain(e) });
+      return null;
+    } finally {
+      setWait(null);
+    }
+  }
+
   async function deviceAction(what: string, hint: string, run: () => Promise<unknown>, done: string) {
     setNotice(null);
     setWait({ what, hint });
@@ -315,6 +333,8 @@ export function App() {
                 } />
                 <TokensCard net={net} info={info} acct={acct} qor={balance} onSubmit={submit}
                   why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""} />
+                <SignInCard acct={acct} index={index} chainId={info.chainId} onSign={signIn}
+                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : ""} />
                 <MultisigCard
                   net={net} info={info} acct={acct} onSubmit={submit}
                   why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""}

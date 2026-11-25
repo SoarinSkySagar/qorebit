@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MSG = 0x51
 CMD_VERSION, CMD_ACCOUNT, CMD_PQ_PUBKEY, CMD_REGISTER_PROOF, CMD_INFO, CMD_SIGN_TX = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+CMD_SIGN_SIWQ = 0x07
 CMD_SECURITY = 0x09
 CMD_SHOW_PHRASE, CMD_RESTORE, CMD_WIPE, CMD_PASSPHRASE = 0x0A, 0x0B, 0x0C, 0x0D
 CMD_SET_PIN, CMD_RESET_PIN = 0x0E, 0x0F
@@ -342,6 +343,12 @@ def api(dev, method, params):
         p = call_job(dev, CMD_REGISTER_PROOF, acct(params) + bytes([len(chain)]) + chain, wait=900)
         ms, = struct.unpack(">I", p[:4])
         return {"ms": ms, "proof": "0x" + p[4:4 + PQ_SIG_LEN].hex()}
+    if method == "device.signSiwq":
+        # Sign In With QoreChain: the device parses the message itself and signs both layers (approval + PIN on the device)
+        message = str(params["message"]).encode()
+        p = call_job(dev, CMD_SIGN_SIWQ, acct(params) + message, wait=900)
+        ms, = struct.unpack(">I", p[:4])
+        return {"ms": ms, "classicalSignature": "0x" + p[4:68].hex(), "pqSignature": "0x" + p[68:68 + PQ_SIG_LEN].hex()}
     if method == "device.signTx":
         chain = params["chainId"].encode()
         body, auth = unhex(params["body"]), unhex(params["authInfo"])

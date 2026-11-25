@@ -32,6 +32,13 @@ post-quantum key** once per account and network, then send.
 
 With Claude Code, run **`/setup`** (or `/setup emu`): it does the steps above and waits for you at the PIN.
 
+### Sign in with QoreChain
+
+Log in to a website with the hardware wallet (QoreChain's SIWQ standard). The board parses the site's message itself, shows
+the site, network, expiry and statement, and signs both layers (secp256k1 over the ADR-36 document, ML-DSA-87 over a
+domain-prefixed message). It signs nothing that is not a canonical sign-in message, and nothing for another account. Matches
+QoreSign byte for byte (`crates/qorebit-signer/src/siwq.rs`); see [walkthrough.md](walkthrough.md), section 6a.
+
 ### Tokens
 
 The companion lists the tokens on the selected network (on the testnet: the test tokens fUSD, fETH, fBTC), adds any token by

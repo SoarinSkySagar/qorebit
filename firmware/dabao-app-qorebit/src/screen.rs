@@ -919,6 +919,7 @@ mod tests {
         };
         let shots = [
             ("16-send-to-a-long-address", Screen::Approval(to_msig), 55),
+            ("19-sign-in", Screen::Approval(Approval { tag: "SIGN IN", heading: "Sign in to a website", big: None, rows: vec![Row::Text("Site: app.example.com".into()), Row::Kv("Account", "Account 1".into()), Row::Kv("Network", "qorechain-diana".into()), Row::Kv("Expires", "2026-11-26 10:10 UTC".into()), Row::Text("Sign in to Example and read your profile".into())] }), 55),
             ("18-send-token", Screen::Approval(Approval { tag: "SEND", heading: "Send", big: None, rows: vec![
                 Row::Addr("To", "qor19ltfv6u4sfx6hz0veu6p80r69pleufhmvn2zmk".to_string()),
                 Row::Kv("Amount", "1000000".into()), Row::Kv("Token", "erc20:0x9714..63CA".into()),

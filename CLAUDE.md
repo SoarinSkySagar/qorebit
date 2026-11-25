@@ -55,6 +55,15 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 - The Keccak engines (combohash, BIO) are gone: ML-DSA on the CPU is the fast path. BIO is only for the panel.
 - Stop processes by exact PID / process group only, never broad `pkill -f` patterns.
 
+## Sign In With QoreChain (SIWQ)
+
+- Device command `SIGN_SIWQ` (0x07), `crates/qorebit-signer/src/siwq.rs`: strict parse (the message must re-render to exactly the text,
+  so nothing else can be signed), `check` (this account only, no resources, statement <= 75, site <= 44 characters), then secp256k1 over
+  `sha256(ADR-36 document)` and ML-DSA-87 over `"qorechain-siwq-v1|" + message`. Byte-identical to `@qorechain/qoresign` (vectors from
+  `tools/gen-vectors.mjs`, `tests/siwq.rs`; `make test-emu` verifies with `verifySiwq`).
+- Companion: `SignIn.tsx` (paste a message or make a test one; the signature JSON is copied back into the site by hand; there is no
+  provider API in the browser yet).
+
 ## Tokens
 
 - A token is a bank coin `erc20:0x<contract, EIP-55 casing>` (the chain's denom metadata gives symbol, name and decimals: the largest

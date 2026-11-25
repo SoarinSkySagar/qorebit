@@ -23,6 +23,7 @@ mod ui;
 
 use flows::Io;
 use protocol::{Status, MSG_TYPE};
+use qorebit_signer::siwq::{self, SiwqError};
 use qorebit_signer::tx::{self, Mode, Msg, SignBytes, TxError};
 use qorebit_signer::{keys, mnemonic_from_entropy, Account, KeyError, Wallet};
 use screen::{Row, Tone};
@@ -133,6 +134,20 @@ fn coins_text(coins: &[tx::Coin]) -> String {
 fn big_qor(c: &tx::Coin) -> Option<(String, &'static str)> {
     let p = c.pretty();
     (c.denom == "uqor").then(|| (p.trim_end_matches(" QOR").to_string(), "QOR")).filter(|(n, _)| !n.contains(' '))
+}
+
+/// "2026-11-26 10:10 UTC" / "2026-11-26 10:10 +05:30" from an ISO timestamp (minutes are enough to read).
+fn time_text(t: &str) -> String {
+    let (day, rest) = t.split_once('T').unwrap_or((t, ""));
+    let clock = rest.get(..5).unwrap_or(rest);
+    let zone = rest.find(['Z', '+', '-']).map(|i| &rest[i..]).unwrap_or("");
+    let zone = if zone == "Z" { "UTC" } else { zone };
+    format!("{day} {clock} {zone}")
+}
+
+/// Free text as the device shows it: plain ASCII (anything else is a `?`).
+fn plain_text(t: &str) -> String {
+    t.chars().map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { '?' }).collect()
 }
 
 /// What the approval screen shows for `view`. Everything the device signs is on it, or the
@@ -401,6 +416,72 @@ impl App {
     /// REGISTER_PROOF: the account's ML-DSA key signs its registration message for a chain, so
     /// the app can build the key-registration transaction (which `SIGN_TX` then checks and
     /// signs classical-only).
+    /// SIGN_SIWQ: Sign In With QoreChain. The device parses the message itself (only the canonical form is taken), shows the
+    /// site, the account, the network, the expiry and the statement, and signs both layers after the right button and the PIN.
+    fn sign_siwq(&mut self, p: &[u8]) -> Vec<u8> {
+        let (Some(index), Some(message)) = (p.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap())), p.get(4..).and_then(|m| core::str::from_utf8(m).ok())) else {
+            return protocol::error(Status::BadRequest, "expected account u32, then the sign-in message as UTF-8");
+        };
+        let mut acct = match self.account(index) {
+            Ok(a) => a,
+            Err(e) => return e,
+        };
+        let fields = match siwq::parse(message) {
+            Ok(f) => f,
+            Err(SiwqError::Malformed(why)) => return protocol::error(Status::BadRequest, &format!("not a Sign In With QoreChain message: {why}")),
+            Err(SiwqError::Refused(why)) => return protocol::error(Status::Refused, why),
+            Err(SiwqError::Key(_)) => return protocol::error(Status::BadRequest, "bad message"),
+        };
+        if let Err(e) = siwq::check(&fields, &acct) {
+            return match e {
+                SiwqError::Refused(why) | SiwqError::Malformed(why) => protocol::error(Status::Refused, why),
+                SiwqError::Key(_) => protocol::error(Status::SigningFailed, "key error"),
+            };
+        }
+        let chain = fields.chain_id.as_str();
+        let mut rows = Vec::new();
+        if chain == MAINNET {
+            rows.push(Row::Warn("MAINNET: real funds".into()));
+        } else if chain != TESTNET && chain != DEVNET {
+            rows.push(Row::Warn("Unknown network".into()));
+        }
+        rows.push(Row::Text(format!("Site: {}", plain_text(&fields.domain))));
+        rows.push(Row::Kv("Account", format!("Account {}", acct.index + 1)));
+        rows.push(Row::Kv("Network", chain.to_string()));
+        match &fields.expiration_time {
+            Some(t) => rows.push(Row::Kv("Expires", time_text(t))),
+            None => rows.push(Row::Kv("Expires", "10 min after issue".into())),
+        }
+        if let Some(s) = &fields.statement {
+            rows.push(Row::Text(plain_text(s)));
+        }
+        let screen = screen::Approval { tag: "SIGN IN", heading: "Sign in to a website", big: None, rows };
+        if let Err(e) = self.approve(screen) {
+            return e;
+        }
+        ui::ui().show_working("SIGNING", vec!["Sign-in message".into()]);
+        let t = Instant::now();
+        let r = match crypto(|| siwq::sign(&mut acct, message)) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let ms = t.elapsed().as_millis() as u32;
+        self.refresh_idle(index);
+        match r {
+            Ok((classical, pq)) => {
+                ui::ui().show_result(Tone::Good, "SIGNED", vec![format!("{ms} ms on the chip"), "Sign-in, both signatures".into()]);
+                let mut out = ms.to_be_bytes().to_vec();
+                out.extend_from_slice(&classical);
+                out.extend_from_slice(&pq[..]);
+                protocol::response(Status::Ok, &out)
+            }
+            Err(e) => {
+                ui::ui().show_result(Tone::Bad, "FAILED", vec!["Nothing was signed".into()]);
+                protocol::error(Status::SigningFailed, &format!("signing failed: {e:?}"))
+            }
+        }
+    }
+
     fn register_proof(&mut self, p: &[u8]) -> Vec<u8> {
         let (Some(index), Some(n)) = (p.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap())), p.get(4).map(|&n| n as usize)) else {
             return protocol::error(Status::BadRequest, "expected account u32, chain id (len u8)");
@@ -771,6 +852,7 @@ impl transport::Handler for App {
             protocol::CMD_GET_ACCOUNT => self.get_account(payload),
             protocol::CMD_GET_PQ_PUBLIC_KEY => self.get_pq_public_key(payload),
             protocol::CMD_REGISTER_PROOF => self.register_proof(payload),
+            protocol::CMD_SIGN_SIWQ => self.sign_siwq(payload),
             protocol::CMD_SIGN_TX => self.sign_tx(payload),
             protocol::CMD_GET_INFO => self.info(),
             protocol::CMD_GET_SECURITY => {
@@ -794,7 +876,7 @@ impl transport::Handler for App {
 fn job_of(cmd: u8) -> u8 {
     match cmd {
         protocol::CMD_GET_ACCOUNT | protocol::CMD_GET_PQ_PUBLIC_KEY => 1,
-        protocol::CMD_SIGN_TX | protocol::CMD_REGISTER_PROOF => 2,
+        protocol::CMD_SIGN_TX | protocol::CMD_REGISTER_PROOF | protocol::CMD_SIGN_SIWQ => 2,
         protocol::CMD_BIO_SELFTEST => 12,
         protocol::CMD_SET_HOME => 3,
         protocol::CMD_GET_INFO | protocol::CMD_GET_SECURITY => 7,

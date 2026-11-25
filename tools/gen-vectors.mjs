@@ -6,7 +6,7 @@ import { shake256 } from "@noble/hashes/sha3.js";
 import {
   addressFromPublicKey, deriveCanonicalPqKey, deriveClassicalKey, signHybrid, hybridSignBytes,
   buildRegisterPqKeyMessage, signProofOfPossession, proofOfPossessionMessage, pqSign, stripExtension,
-  classicalSign, encodeSignDoc, toHex, signMessage,
+  classicalSign, encodeSignDoc, toHex, signMessage, createSiwqMessage, signSiwq, adr36SignBytes, siwqPqSignBytes,
 } from "@qorechain/qoresign";
 import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
 import { TxBody, AuthInfo, SignerInfo, Fee, ModeInfo } from "cosmjs-types/cosmos/tx/v1beta1/tx";
@@ -69,4 +69,28 @@ const popMsg = proofOfPossessionMessage({ chainId: "qorechain-local", account: a
 const pop = signProofOfPossession({ chainId: "qorechain-local", account: acct.address, pqKey });
 const reg = buildRegisterPqKeyMessage({ chainId: "qorechain-local", account: acct.address, pqKey, classicalPublicKey: classical.publicKey });
 out.register = { chainId: "qorechain-local", popMessage: new TextDecoder().decode(popMsg), popSigSha256: hs(pop), msgValueSha256: hs(reg.value), msgTypeUrl: reg.typeUrl };
+
+// Sign In With QoreChain: the message text, the ADR-36 document the classical key signs, and both signatures (deterministic)
+const siwqBase = { domain: "app.example.com", scheme: "https", address: acct.address, statement: "Sign in to Example", uri: "https://app.example.com/login", chainId: "qorechain-diana", nonce: "abc12345XYZ", issuedAt: "2026-11-26T10:00:00Z", expirationTime: "2026-11-26T10:10:00Z" };
+const siwqCases = {
+  full: siwqBase,
+  minimal: { domain: "localhost:3000", address: acct.address, uri: "http://localhost:3000", chainId: "qorechain-local", nonce: "A1b2C3d4", issuedAt: "2026-11-26T10:00:00.123+05:30" },
+  "request-id": { ...siwqBase, requestId: "req-42", notBefore: "2026-11-26T09:59:00Z" },
+  resources: { ...siwqBase, resources: ["https://app.example.com/profile", "ipfs://bafyabc"] },
+  "other-account": { ...siwqBase, address: out.accounts[1].address },
+};
+out.siwq = { me: acct.address, cases: {} };
+for (const [name, fields] of Object.entries(siwqCases)) {
+  const message = createSiwqMessage(fields);
+  // the other account's message is signed with that account's keys (QoreSign refuses otherwise); the device must refuse it for account 1
+  const own = fields.address === acct.address;
+  const ck = own ? classical : deriveClassicalKey({ mnemonic, index: 1 });
+  const pk = own ? pqKey : deriveCanonicalPqKey({ mnemonic, address: fields.address });
+  const sig = signSiwq({ message, classicalKey: ck, pqKey: pk });
+  out.siwq.cases[name] = {
+    message, adr36: h(adr36SignBytes(fields.address, new TextEncoder().encode(message))), pqBytes: h(siwqPqSignBytes(message)),
+    classicalSignature: h(Uint8Array.from(Buffer.from(sig.classical.signature, "base64"))),
+    pqSignatureSha256: hs(Uint8Array.from(Buffer.from(sig.pq.signature, "base64"))),
+  };
+}
 console.log(JSON.stringify(out, null, 1));
