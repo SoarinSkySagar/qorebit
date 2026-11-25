@@ -26,7 +26,7 @@ use protocol::{Status, MSG_TYPE};
 use qorebit_signer::tx::{self, Mode, Msg, SignBytes, TxError};
 use qorebit_signer::{keys, mnemonic_from_entropy, Account, KeyError, Wallet};
 use screen::{Row, Tone};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -57,6 +57,18 @@ fn crypto<R: Send>(f: impl FnOnce() -> R + Send) -> Result<R, Vec<u8>> {
             .map_err(|e| protocol::error(Status::SigningFailed, &format!("not enough memory to sign: {e}")))?;
         h.join().map_err(|_| protocol::error(Status::SigningFailed, "the signing thread crashed"))
     })
+}
+
+/// When the companion app last sent the device a request (milliseconds since the app started).
+static LAST_HOST_MS: AtomicU32 = AtomicU32::new(0);
+/// The companion polls every few seconds; this long without a request means it is gone.
+const LINK_TIMEOUT_MS: u32 = 15_000;
+
+fn host_clock_ms() -> u32 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    // 32 bits (the chip has no 64-bit atomics): wraps after 49 days, which `wrapping_sub` below survives;
+    // never 0, so that "no request yet" is distinguishable
+    (START.get_or_init(Instant::now).elapsed().as_millis() as u32).max(1)
 }
 
 /// Chains the device knows by name. Any other chain id is signed for too (a private chain, a
@@ -102,6 +114,30 @@ fn big_qor(c: &tx::Coin) -> Option<(String, &'static str)> {
     (c.denom == "uqor").then(|| (p.trim_end_matches(" QOR").to_string(), "QOR")).filter(|(n, _)| !n.contains(' '))
 }
 
+/// "1 day", "12 hours", "30 minutes", "45 s": a voting period.
+fn duration_text(secs: u64) -> String {
+    let unit = |n: u64, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
+    if secs > 0 && secs % 86400 == 0 {
+        unit(secs / 86400, "day", "days")
+    } else if secs > 0 && secs % 3600 == 0 {
+        unit(secs / 3600, "hour", "hours")
+    } else if secs > 0 && secs % 60 == 0 {
+        unit(secs / 60, "minute", "minutes")
+    } else {
+        format!("{secs} s")
+    }
+}
+
+/// A free-text title as the device shows it: plain ASCII, at most `max` characters.
+fn title_text(t: &str, max: usize) -> String {
+    let t: String = t.chars().map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { '?' }).collect();
+    if t.chars().count() > max {
+        format!("{}..", t.chars().take(max - 2).collect::<String>())
+    } else {
+        t
+    }
+}
+
 /// What the approval screen shows for `view`. Everything the device signs is on it, or the
 /// heading says BLIND.
 fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen::Approval {
@@ -144,6 +180,79 @@ fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen:
                 rows.push(Row::Kv("Signed", "classical only".into()));
             }
             ("REGISTER", "Register your post-quantum key", None)
+        }
+        Msg::GroupCreate { members, policy, voting_secs, policy_as_admin, .. } => {
+            let need = match policy {
+                tx::GroupPolicy::Threshold(t) => format!("{t} of {} members", members.len()),
+                tx::GroupPolicy::Percentage(p) => format!("{p} of the weight"),
+            };
+            rows.push(Row::Kv("Approvals", need));
+            for (i, (addr, _)) in members.iter().take(tx::MAX_DEVICE_MEMBERS).enumerate() {
+                let label = ["Member 1", "Member 2", "Member 3", "Member 4"][i];
+                let who = if *addr == acct.address_bech { "you".to_string() } else { short(addr) };
+                rows.push(Row::Kv(label, who));
+            }
+            rows.push(Row::Kv("Voting", duration_text(*voting_secs)));
+            if *policy_as_admin {
+                rows.push(Row::Warn("The multisig runs the group".into()));
+            }
+            ("MULTISIG", "Create a multisig", None)
+        }
+        Msg::GroupPropose { policy, title, inner, exec_now, .. } => {
+            rows.push(Row::Kv("Multisig", short(policy)));
+            let mut big = None;
+            let heading: &'static str = match inner.first() {
+                Some(Msg::Send { to, amount, .. }) => {
+                    rows.push(Row::Addr("To", to.clone()));
+                    big = (amount.len() == 1).then(|| big_qor(&amount[0])).flatten();
+                    if big.is_none() {
+                        rows.push(Row::Kv("Amount", coins_text(amount)));
+                    }
+                    "Propose a multisig payment"
+                }
+                Some(Msg::Delegate { validator, amount, .. }) => {
+                    rows.push(Row::Kv("Validator", short(validator)));
+                    big = big_qor(amount);
+                    "Propose: multisig stakes"
+                }
+                Some(Msg::Undelegate { validator, amount, .. }) => {
+                    rows.push(Row::Kv("Validator", short(validator)));
+                    big = big_qor(amount);
+                    "Propose: multisig unstakes"
+                }
+                Some(Msg::WithdrawReward { validator, .. }) => {
+                    rows.push(Row::Kv("Validator", short(validator)));
+                    "Propose: claim rewards"
+                }
+                Some(Msg::Other { type_url, .. }) => {
+                    rows.push(Row::Warn("BLIND action in this proposal".into()));
+                    rows.push(Row::Kv("Type", type_url.rsplit('.').next().unwrap_or(type_url).to_string()));
+                    "Propose a multisig action"
+                }
+                _ => "Propose a multisig action",
+            };
+            rows.push(Row::Kv("Title", title_text(title, 22)));
+            if *exec_now {
+                rows.push(Row::Warn("Runs at once if it passes".into()));
+            }
+            ("PROPOSE", heading, big)
+        }
+        Msg::GroupVote { proposal_id, option, .. } => {
+            rows.push(Row::Kv("Proposal", format!("#{proposal_id}")));
+            let vote = match option {
+                1 => "YES",
+                2 => "ABSTAIN",
+                3 => "NO",
+                _ => "NO + VETO",
+            };
+            rows.push(Row::Kv("Your vote", vote.into()));
+            rows.push(from);
+            ("VOTE", "Vote on a multisig proposal", None)
+        }
+        Msg::GroupExec { proposal_id, .. } => {
+            rows.push(Row::Kv("Proposal", format!("#{proposal_id}")));
+            rows.push(from);
+            ("EXECUTE", "Run a passed multisig proposal", None)
         }
         Msg::Other { type_url, len, id } => {
             let name = type_url.rsplit('.').next().unwrap_or(type_url);
@@ -426,9 +535,9 @@ impl App {
         self.security.pin_tries = storage::pin_tries_left(&mut self.store);
         self.security.pin_set = storage::pin_is_set(&mut self.store);
         let home = match &self.home {
-            Some((a, h)) if *a == account => h.clone(),
-            Some((_, h)) => screen::Home { app_seen: true, network: h.network.clone(), ..Default::default() },
-            None => screen::Home::default(),
+            Some((a, h)) if *a == account => screen::Home { app_seen: ui::link_up(), ..h.clone() },
+            Some((_, h)) => screen::Home { app_seen: ui::link_up(), network: h.network.clone(), ..Default::default() },
+            None => screen::Home { app_seen: ui::link_up(), ..Default::default() },
         };
         // without a SET_HOME for this account the device still knows its own address
         let home = if home.address.is_none() {
@@ -776,6 +885,14 @@ impl transport::Handler for Dispatcher {
         if body.len() < 2 || body[0] != MSG_TYPE {
             return protocol::error(Status::BadRequest, "not a Qorebit message");
         }
+        // the companion app is the one that asks for accounts, security and home screens: note that it is
+        // there (the bridge's own screen polling and presses do not count)
+        if !matches!(body[1], protocol::CMD_GET_VERSION | protocol::CMD_DISPLAY_POLL | protocol::CMD_DISPLAY_INPUT | protocol::CMD_RESULT) {
+            LAST_HOST_MS.store(host_clock_ms(), Ordering::Relaxed);
+            if !ui::link_up() {
+                ui::ui().set_link(true);
+            }
+        }
         // version always answers at once: a liveness check even while a job runs
         if body[1] == protocol::CMD_GET_VERSION {
             return protocol::response(Status::Ok, VERSION.as_bytes());
@@ -888,6 +1005,19 @@ fn main() -> ! {
     // the screen and the button on the board
     #[cfg(all(target_os = "xous", feature = "panel"))]
     panel::spawn();
+    // the home screen shows whether the companion app is connected; this notices when it goes away
+    std::thread::Builder::new()
+        .name("qorebit-link".into())
+        .stack_size(16 * 1024)
+        .spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let last = LAST_HOST_MS.load(Ordering::Relaxed);
+            let up = last != 0 && host_clock_ms().wrapping_sub(last) < LINK_TIMEOUT_MS;
+            if up != ui::link_up() {
+                ui::ui().set_link(up);
+            }
+        })
+        .expect("link thread");
     // the boot job counts as pending until its reply is collected
     transport::serve(Dispatcher { to_worker, from_worker, busy: true, boot_job: true, started: Instant::now() })
 }

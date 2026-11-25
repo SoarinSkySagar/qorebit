@@ -1,6 +1,6 @@
 //! Device screen and approval.
 //!
-//! The device decides every screen and **renders it itself** into a 240x240 colour framebuffer
+//! The device decides every screen and **renders it itself** into a 240x280 colour framebuffer
 //! (`screen.rs`, 16-colour palette, `embedded-graphics`). Signing asks for a decision with
 //! [`Ui::ask`]: the request blocks until the user approves, rejects, or the timeout passes
 //! (= reject).
@@ -22,6 +22,7 @@
 //! next / back, word-by-word entry).
 
 use crate::screen::{self, Frame, Screen, Tone};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -137,6 +138,13 @@ pub struct Ui {
 
 static UI: OnceLock<Ui> = OnceLock::new();
 
+/// Whether the companion app is talking to the device (a host request in the last few seconds).
+static LINK: AtomicBool = AtomicBool::new(false);
+
+pub fn link_up() -> bool {
+    LINK.load(Ordering::Relaxed)
+}
+
 pub fn ui() -> &'static Ui {
     UI.get_or_init(|| Ui {
         state: Mutex::new(State {
@@ -221,6 +229,19 @@ impl Ui {
     }
 
     /// Set the screen shown when nothing needs a decision.
+    /// The companion app appeared or went away: the home screen's connection line follows.
+    pub fn set_link(&self, up: bool) {
+        LINK.store(up, Ordering::Relaxed);
+        let mut s = self.state.lock().unwrap();
+        if let Screen::Idle { home, .. } = &mut s.idle {
+            home.app_seen = up;
+        }
+        if s.kind == KIND_IDLE {
+            let idle = s.idle.clone();
+            s.show(idle);
+        }
+    }
+
     pub fn set_idle(&self, idle: Screen) {
         let mut s = self.state.lock().unwrap();
         s.idle = idle;

@@ -14,7 +14,7 @@ pub const OP_SYNC: u32 = 0x6;
 
 /// Rows of the panel's glass. The 1.69" 240x280 ST7789 module; 240 for a 240x240 one.
 pub const PANEL_ROWS: usize = 280;
-/// The 240-row frame sits in the middle of the glass: panel row = frame row + ROW_OFFSET.
+/// The frame covers the whole glass (HEIGHT = PANEL_ROWS, so 0); a smaller frame would sit in the middle.
 pub const ROW_OFFSET: usize = (PANEL_ROWS - HEIGHT as usize) / 2;
 /// Rows of the ST7789's frame memory (it has 320 for any panel up to 240x320), and the row where a
 /// 240x280 panel's glass starts in it. The Adafruit ST7789 driver uses the same 20 for a 240x280
@@ -148,8 +148,8 @@ mod tests {
     fn runs_expand_to_the_direct_pixels() {
         let f = render(&Screen::Boot, 0, 60);
         let mut words = palette_words();
-        words.extend(rows_words(&f, 0, 240));
-        assert_eq!(wire_bytes(&words), direct_bytes(&f, 0, 240));
+        words.extend(rows_words(&f, 0, HEIGHT as usize));
+        assert_eq!(wire_bytes(&words), direct_bytes(&f, 0, HEIGHT as usize));
         // a few rows mid-frame
         words = palette_words();
         words.extend(rows_words(&f, 100, 103));
@@ -159,8 +159,8 @@ mod tests {
     #[test]
     fn runs_are_compact() {
         let f = render(&Screen::Boot, 0, 60);
-        let words = rows_words(&f, 0, 240);
-        // a 115,200-byte frame in a few hundred words: 4-bit colour + run length
+        let words = rows_words(&f, 0, HEIGHT as usize);
+        // a 134,400-byte frame in a few hundred words: 4-bit colour + run length
         assert!(words.len() < 1000, "{} words", words.len());
     }
 
@@ -168,9 +168,9 @@ mod tests {
     fn frame_rows_sit_in_the_middle_of_the_glass() {
         assert_eq!(ROW_OFFSET + HEIGHT as usize + ROW_OFFSET, PANEL_ROWS);
         let f = render(&Screen::Boot, 0, 60);
-        let bytes = direct_bytes(&f, 230, 240);
-        // RASET: frame-memory rows 270..279 (GRAM_Y + ROW_OFFSET + 230 ..), both bytes of each
-        assert_eq!(&bytes[5..11], &[(false, 0x2B), (true, 1), (true, 14), (true, 1), (true, 23), (false, 0x2C)]);
+        let bytes = direct_bytes(&f, 270, 280);
+        // RASET: frame-memory rows 290..299 (GRAM_Y + ROW_OFFSET + 270 ..), both bytes of each
+        assert_eq!(&bytes[5..11], &[(false, 0x2B), (true, 1), (true, 34), (true, 1), (true, 43), (false, 0x2C)]);
         // CASET: columns 0..239
         assert_eq!(&bytes[0..5], &[(false, 0x2A), (true, 0), (true, 0), (true, 0), (true, 239)]);
     }

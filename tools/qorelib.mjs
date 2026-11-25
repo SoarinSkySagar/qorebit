@@ -71,3 +71,21 @@ export async function waitTx(rest, hash, seconds = 60) {
 }
 
 export { toHex, fromHex, sha256 };
+
+const BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+function polymod(values) {
+  const gen = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of values) { const top = chk >>> 25; chk = ((chk & 0x1ffffff) << 5) ^ v; for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= gen[i]; }
+  return chk >>> 0;
+}
+/** A `qor1...` address with a good bech32 checksum: 20 bytes (an account) or 32 bytes (a multisig's own account). */
+export function isQorAddress(s) {
+  if (s !== s.toLowerCase() || s.lastIndexOf("1") !== 3 || !s.startsWith("qor")) return false;
+  const data = [...s.slice(4)].map((c) => BECH32.indexOf(c));
+  if (data.length < 7 || data.some((v) => v < 0)) return false;
+  const hrp = [...s.slice(0, 3)].map((c) => c.charCodeAt(0));
+  if (polymod([...hrp.map((c) => c >> 5), 0, ...hrp.map((c) => c & 31), ...data]) !== 1) return false;
+  const bytes = Math.floor(((data.length - 6) * 5) / 8);
+  return bytes === 20 || bytes === 32;
+}

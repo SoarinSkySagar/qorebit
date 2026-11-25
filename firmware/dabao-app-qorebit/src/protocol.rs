@@ -39,7 +39,7 @@
 //!
 //! Snapshot: `seq u32, screen id u32, kind u8 (0 idle, 1 approval, 2 result, 3 PIN entry,
 //! 4 other input: left = 0, right = 1), seconds left u8, vdisplay u8, has_frame u8,
-//! [frame update]`. The frame is the device-rendered 240x240 16-colour screen (RLE rows).
+//! [frame update]`. The frame is the device-rendered 240x280 16-colour screen (RLE rows).
 //!
 //! Long jobs: requests run on a worker thread. If the answer isn't ready within ~200 ms the
 //! device replies status PENDING (7) with `job u8, 0 u32, elapsed_ms u32`; the host then polls

@@ -32,6 +32,15 @@ post-quantum key** once per account and network, then send.
 
 With Claude Code, run **`/setup`** (or `/setup emu`): it does the steps above and waits for you at the PIN.
 
+### Multisig
+
+Shared accounts ("N of M must agree") use QoreChain's group module, so no special signing mode is needed: creating a
+multisig, proposing a payment, voting and running it are each an ordinary transaction that one member approves on their
+own device. The device decodes these messages itself (it shows every member and the threshold, the proposed payment, the
+proposal number and your vote), and refuses what is not its own account's. Limits: threshold multisigs of up to 4
+equal-weight members created on the device, one proposed action per proposal; the device cannot read the chain, so for
+votes it shows the proposal number. See [walkthrough.md](walkthrough.md) (section 6c).
+
 ### The two buttons
 
 | | **left** button (PB1) | **right** button (PB2) |

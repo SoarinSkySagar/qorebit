@@ -5,8 +5,9 @@ import {
   broadcast, gasFor, getAccount, getBalance, history, nodeChainId, pqStatus, signBytes, waitForTx,
   type Activity, type ChainAccount,
 } from "./chain";
+import { MultisigCard } from "./Multisig";
 import { DEFAULT_NETWORKS, NETWORK_IDS, type NetworkId, type NetworkInfo } from "./networks";
-import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR } from "./tx";
+import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg } from "./tx";
 
 const short = (s: string, a = 10, b = 6) => (s.length > a + b + 2 ? `${s.slice(0, a)}…${s.slice(-b)}` : s);
 const ACCOUNTS = 8;
@@ -213,6 +214,42 @@ export function App() {
     }
   }
 
+  /** One transaction with these messages from the selected account: fee from the node, the device reads and
+   *  signs it, the network takes it. True when it was included and succeeded. (Used by the multisig card.) */
+  async function submit(what: string, msgs: AnyMsg[]): Promise<boolean> {
+    setNotice(null);
+    try {
+      const a = needAccount();
+      if (!chainAcct) throw new Error("this account does not exist on chain yet");
+      if (!pqRegistered) throw new Error("register the post-quantum key first: the chain refuses a transaction without it");
+      setWait({ what, hint: "Preparing the transaction: checking the network and the fee…" });
+      await ensureChain();
+      const classical = fromHex(a.publicKey);
+      const probe = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS });
+      const { gas } = await gasFor(net, probe.body, probe.authInfo);
+      const { body, authInfo } = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas });
+      if ((balance ?? 0n) < fee(gas)) throw new Error(`not enough QOR for the network fee of ${formatQor(fee(gas))}`);
+      setWait({ what, hint: "Check the device screen and compare it with what you asked for. Right button approves, left button rejects." });
+      const signed = await device.signTx({
+        account: index, accountNumber: chainAcct.accountNumber, chainId: info.chainId, body: toHex(body), authInfo: toHex(authInfo),
+        signBytes: await signBytes(net, info.chainId),
+      });
+      setWait({ what: "Broadcasting", hint: "" });
+      const r = await broadcast(net, fromHex(signed.txBytes));
+      if (r.code !== 0) throw new Error(`the chain refused it (code ${r.code}): ${r.log}`);
+      const done = await waitForTx(net, r.txhash);
+      if (done.code !== 0) throw new Error(`it failed on chain: ${done.rawLog}`);
+      setNotice({ tone: "good", text: `${what}: done. Transaction ${short(r.txhash, 10, 8)} in block ${done.height}.` });
+      await refresh();
+      return true;
+    } catch (e) {
+      setNotice({ tone: "bad", text: explain(e) });
+      return false;
+    } finally {
+      setWait(null);
+    }
+  }
+
   async function deviceAction(what: string, hint: string, run: () => Promise<unknown>, done: string) {
     setNotice(null);
     setWait({ what, hint });
@@ -275,6 +312,10 @@ export function App() {
                 <SendCard disabled={!!wait || !security.pinSet || !pqRegistered || !chainAcct} balance={balance} info={info} onSend={send} why={
                   !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""
                 } />
+                <MultisigCard
+                  net={net} info={info} acct={acct} onSubmit={submit}
+                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""}
+                />
               </div>
               <div className="col">
                 <ActivityCard activity={activity} />

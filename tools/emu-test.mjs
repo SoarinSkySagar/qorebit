@@ -16,6 +16,9 @@ import {
 } from "@qorechain/qoresign";
 import { broadcastTx, fetchPqKeyStatus, resolveSignBytesVersion } from "@qorechain/qoresign/network";
 import { accountInfo, balance, buildTx, restOf, sendMsg, waitTx } from "./qorelib.mjs";
+import { MsgCreateGroupWithPolicy, MsgSubmitProposal, MsgVote, MsgExec } from "cosmjs-types/cosmos/group/v1/tx";
+import { ThresholdDecisionPolicy } from "cosmjs-types/cosmos/group/v1/types";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
 import net from "node:net";
 
 const arg = (name, dflt) => Number(process.argv[process.argv.indexOf(name) + 1]) || dflt;
@@ -210,6 +213,78 @@ try {
   const t5 = mk([{ typeUrl: "/cosmos.bank.v1beta1.MsgMultiSend", value: new Uint8Array([1, 2, 3]) }]);
   script.approval.push(LEFT); // an unknown message is shown as BLIND; the user can reject it
   await expectError("an unknown message type reaches the screen (BLIND) and the left button rejects it", () => call("device.signTx", { account: 0, accountNumber: "1", chainId: CHAIN_ID, signBytes: version, body: toHex(t5.bodyBytes), authInfo: toHex(t5.authInfoBytes) }), /rejected/);
+
+  // 8b. a multisig on the chain's group module: two device accounts create a 2-of-2, fund it, propose a payment,
+  // both vote, and the chain runs it. Every step is one member's ordinary single-signer transaction.
+  {
+    const acc2 = addr(1), acc3 = addr(2);
+    const fund = (address, amount) => fetch(`http://127.0.0.1:${HTTP}/devnet/fund`, { method: "POST", body: JSON.stringify({ address, amount }) }).then((r) => r.json());
+    check(!(await fund(acc2, 20_000_000)).error, "the faucet funded account 2 (a second multisig member)");
+    // account 2 registers its post-quantum key like account 1 did
+    {
+      const i2 = await accountInfo(rest, acc2);
+      const pf = await call("device.registerProof", { account: 1, chainId: CHAIN_ID });
+      const pk2 = fromHex((await call("device.pqPublicKey", { account: 1 })).publicKey);
+      const m2 = registerMsg(acc2, pk2, classical(1).publicKey, fromHex(pf.proof));
+      const t = buildTx({ messages: [{ typeUrl: m2.typeUrl, value: m2.value }], publicKey: classical(1).publicKey, sequence: i2.sequence });
+      const sg = await call("device.signTx", { account: 1, accountNumber: String(i2.accountNumber), chainId: CHAIN_ID, body: toHex(t.bodyBytes), authInfo: toHex(t.authInfoBytes), classicalOnly: true, signBytes: version });
+      await broadcast(fromHex(sg.txBytes));
+      check((await fetchPqKeyStatus({ rest, address: acc2 })).registered, "account 2's post-quantum key is registered");
+    }
+    const any = (typeUrl, value) => ({ typeUrl, value });
+    const groupTx = async (index, msgs, extra = {}) => {
+      const a = addr(index), i = await accountInfo(rest, a);
+      const t = buildTx({ messages: msgs, publicKey: classical(index).publicKey, sequence: i.sequence, gas: 1_500_000n });
+      const params = { account: index, accountNumber: String(i.accountNumber), chainId: CHAIN_ID, body: toHex(t.bodyBytes), authInfo: toHex(t.authInfoBytes), signBytes: version, ...extra };
+      return { params, run: async () => broadcast(fromHex((await call("device.signTx", params)).txBytes)) };
+    };
+    const threshold = (n, secs = 3600) => any("/cosmos.group.v1.ThresholdDecisionPolicy", ThresholdDecisionPolicy.encode(ThresholdDecisionPolicy.fromPartial({ threshold: String(n), windows: { votingPeriod: { seconds: BigInt(secs), nanos: 0 }, minExecutionPeriod: { seconds: 0n, nanos: 0 } } })).finish());
+    const createMsg = (members, n) => any("/cosmos.group.v1.MsgCreateGroupWithPolicy", MsgCreateGroupWithPolicy.encode(MsgCreateGroupWithPolicy.fromPartial({ admin: me, members: members.map((address) => ({ address, weight: "1", metadata: "" })), groupMetadata: "e2e", groupPolicyMetadata: "e2e", decisionPolicy: threshold(n) })).finish());
+    const refuseAs = async (what, index, msgs, pattern) => expectError(what, async () => (await groupTx(index, msgs)).run(), pattern);
+
+    // what the device refuses to sign for a multisig
+    await refuseAs("a multisig of five members is refused (the screen shows every member)", 0, [createMsg([me, acc2, acc3, addr(3), addr(4)], 3)], /multisig of 1 to 4/);
+    await refuseAs("a 3 of 2 threshold is refused", 0, [createMsg([me, acc2], 3)], /threshold must be/);
+    await refuseAs("a multisig created by an account that is not its admin is refused", 1, [createMsg([me, acc2], 2)], /not from this account/);
+
+    // 1. create the 2-of-2 (account 1 is the admin)
+    await (await groupTx(0, [createMsg([me, acc2], 2)])).run();
+    const groups = await (await fetch(`${rest}/cosmos/group/v1/groups_by_member/${me}`)).json();
+    check(groups.groups?.length >= 1, "the chain created the multisig group");
+    const gid = groups.groups[groups.groups.length - 1].id;
+    const pol = (await (await fetch(`${rest}/cosmos/group/v1/group_policies_by_group/${gid}`)).json()).group_policies[0];
+    check(pol.decision_policy.threshold === "2", `the multisig account is ${pol.address} (2 of 2)`);
+
+    // 2. fund it, then propose paying account 3
+    check(!(await fund(pol.address, 10_000_000)).error, "the multisig account was funded with 10 QOR");
+    const propose = (index, from, to, amount) => any("/cosmos.group.v1.MsgSubmitProposal", MsgSubmitProposal.encode(MsgSubmitProposal.fromPartial({
+      groupPolicyAddress: pol.address, proposers: [addr(index)], metadata: "", exec: 0, title: "Pay account 3", summary: "e2e",
+      messages: [any("/cosmos.bank.v1beta1.MsgSend", MsgSend.encode(MsgSend.fromPartial({ fromAddress: from, toAddress: to, amount: [{ denom: "uqor", amount: String(amount) }] })).finish())],
+    })).finish());
+    await refuseAs("a proposal whose payment is not from the multisig account is refused", 0, [propose(0, me, acc3, 1)], /not from the multisig/);
+    await (await groupTx(0, [propose(0, pol.address, acc3, 2_500_000)])).run();
+    const props = (await (await fetch(`${rest}/cosmos/group/v1/proposals_by_group_policy/${pol.address}`)).json()).proposals;
+    check(props.length === 1 && props[0].status === "PROPOSAL_STATUS_SUBMITTED", "the proposal is open: nothing has moved yet");
+    const pid = BigInt(props[0].id);
+    const polBefore = await balance(rest, pol.address), to3 = await balance(rest, acc3);
+
+    // 3. votes: a vote cast in another member's name is refused; each member votes with their own account
+    const vote = (voter, option) => any("/cosmos.group.v1.MsgVote", MsgVote.encode(MsgVote.fromPartial({ proposalId: pid, voter, option, metadata: "" })).finish());
+    await refuseAs("a vote in another member's name is refused", 0, [vote(acc2, 1)], /not from this account/);
+    await (await groupTx(0, [vote(me, 1)])).run();
+    await (await groupTx(1, [vote(acc2, 1)])).run();
+    // the chain tallies live; it marks the proposal accepted when it is run (or when the voting time ends)
+    const tally = (await (await fetch(`${rest}/cosmos/group/v1/proposals/${pid}/tally`)).json()).tally;
+    check(Number(tally.yes_count) === 2, "both members voted yes: the tally reaches the 2 of 2 threshold");
+    check((await balance(rest, acc3)) === to3, "still nothing has moved: a proposal that has enough votes still has to be run");
+
+    // 4. run it
+    const exec = (executor) => any("/cosmos.group.v1.MsgExec", MsgExec.encode(MsgExec.fromPartial({ proposalId: pid, executor })).finish());
+    await refuseAs("running a proposal in another member's name is refused", 0, [exec(acc2)], /not from this account/);
+    await (await groupTx(0, [exec(me)])).run();
+    check((await balance(rest, acc3)) === to3 + 2_500_000n, "the chain paid out 2.5 QOR from the multisig to account 3");
+    check((await balance(rest, pol.address)) === polBefore - 2_500_000n, "the multisig's balance went down by the same amount");
+  }
 
   // 9. other networks: the chain id is part of what is signed, and mainnet says so on the screen
   const main = buildTx({ messages: [sendMsg(me, you, 250_000_000)], publicKey: own, sequence: 5n });

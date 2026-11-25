@@ -1,6 +1,6 @@
 //! On-chip rendering of the device screen.
 //!
-//! The screen is a **240x240 colour panel** (ST7789-class TFT) drawn with a 16-colour palette:
+//! The screen is a **240x280 colour panel** (ST7789-class TFT) drawn with a 16-colour palette:
 //! one palette index per pixel, rendered here on the Baochip with `embedded-graphics`.
 //!
 //! * now (`vdisplay`): the chip run-length encodes the rows that changed and sends them over
@@ -12,17 +12,17 @@
 
 use embedded_graphics::{
     mono_font::{
-        ascii::{FONT_6X10, FONT_7X13, FONT_9X18_BOLD},
+        ascii::{FONT_10X20, FONT_6X10, FONT_7X13, FONT_8X13, FONT_9X18, FONT_9X18_BOLD},
         MonoFont, MonoTextStyle,
     },
     pixelcolor::raw::RawU8,
     prelude::*,
-    primitives::{CornerRadii, PrimitiveStyle, Rectangle, RoundedRectangle, Triangle},
+    primitives::{Circle, CornerRadii, PrimitiveStyle, Rectangle, RoundedRectangle, Triangle},
     text::{Alignment, Baseline, Text, TextStyleBuilder},
 };
 
 pub const WIDTH: u32 = 240;
-pub const HEIGHT: u32 = 240;
+pub const HEIGHT: u32 = 280;
 pub const FRAME_LEN: usize = (WIDTH * HEIGHT) as usize;
 
 /// A palette index.
@@ -46,28 +46,29 @@ pub const GREEN_D: Pal = Pal(9);
 pub const RED_D: Pal = Pal(10);
 pub const AMBER_D: Pal = Pal(11);
 pub const ADDR2: Pal = Pal(12);
+pub const YELLOW: Pal = Pal(13);
 
 /// RGB for each palette index (sent with every frame update, so the window needs no copy).
 pub const PALETTE: [[u8; 3]; 16] = [
-    [0x00, 0x00, 0x00], // BG
-    [0xFF, 0xFF, 0xFF], // WHITE navbar
-    [0xEC, 0xEE, 0xF1], // INK
-    [0x86, 0x8C, 0x96], // MUTED labels
-    [0x2B, 0x2F, 0x36], // LINE dividers, empty bar
-    [0x16, 0x19, 0x1D], // GHOST unlit segments
+    [0x0B, 0x07, 0x16], // BG deep violet-black
+    [0x7C, 0x3A, 0xED], // WHITE (the name is kept) = the purple navbar
+    [0xF3, 0xEE, 0xFF], // INK
+    [0xA3, 0x97, 0xC4], // MUTED labels
+    [0x30, 0x24, 0x52], // LINE dividers, empty bar
+    [0x1A, 0x12, 0x2E], // GHOST unlit segments
     [0x2E, 0xE0, 0x7A], // GREEN approve
     [0xFF, 0x4A, 0x4A], // RED reject
     [0xFF, 0xB3, 0x1F], // AMBER warning
     [0x0A, 0x33, 0x1C], // GREEN_D
     [0x45, 0x10, 0x12], // RED_D
     [0x42, 0x30, 0x05], // AMBER_D
-    [0xB8, 0xC6, 0xFF], // ADDR2 alternate address groups
-    [0x00, 0x00, 0x00],
+    [0xC4, 0xB5, 0xFD], // ADDR2 alternate address groups (lavender)
+    [0xFF, 0xD8, 0x2E], // YELLOW waiting for the companion app
     [0x00, 0x00, 0x00],
     [0x00, 0x00, 0x00],
 ];
 
-/// 240x240 framebuffer, one palette index per pixel, row-major.
+/// 240x280 framebuffer, one palette index per pixel, row-major.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Frame(pub Vec<u8>);
 
@@ -268,9 +269,9 @@ pub enum Screen {
 // ------------------------------------------------------------------ drawing helpers
 
 const M: i32 = 12; // side margin
-const NAV_H: i32 = 26;
-const ACTIONS_Y: i32 = 205; // top of the left / right button hints
-const BAR_Y: i32 = 196; // countdown bar
+const NAV_H: i32 = 34;
+const ACTIONS_Y: i32 = HEIGHT as i32 - 33; // top of the left / right button hints
+const BAR_Y: i32 = ACTIONS_Y - 8; // countdown bar
 
 fn fill(f: &mut Frame, x: i32, y: i32, w: i32, h: i32, c: Pal) {
     if w > 0 && h > 0 {
@@ -290,8 +291,16 @@ fn text_w(s: &str, font: &MonoFont) -> i32 {
 
 fn navbar(f: &mut Frame, tag: &str) {
     fill(f, 0, 0, WIDTH as i32, NAV_H, WHITE);
-    text_at(f, "QOREBIT", &FONT_9X18_BOLD, BG, M - 2, 4, Alignment::Left);
-    text_at(f, tag, &FONT_7X13, BG, WIDTH as i32 - M + 2, 7, Alignment::Right);
+    // the name in a large font, drawn twice one pixel apart so it reads bold
+    for dx in [0, 1] {
+        text_at(f, "QOREBIT", &FONT_10X20, INK, M - 2 + dx, 7, Alignment::Left);
+    }
+    text_at(f, tag, &FONT_9X18, INK, WIDTH as i32 - M + 2, 8, Alignment::Right);
+}
+
+/// A round status dot, 9 px across.
+fn dot(f: &mut Frame, x: i32, y: i32, c: Pal) {
+    Circle::new(Point::new(x, y), 9).into_styled(PrimitiveStyle::with_fill(c)).draw(f).ok();
 }
 
 fn divider(f: &mut Frame, y: i32) {
@@ -464,118 +473,145 @@ fn fit_seg(s: &str, max_w: i32, sizes: &[i32]) -> Seg {
 fn idle(f: &mut Frame, account: u32, home: &Home, trust: crate::security::Trust, passphrase: bool) {
     navbar(f, "");
     // accounts are numbered from 1, as in the companion app
-    text_at(f, &format!("Account {}", account + 1), &FONT_7X13, MUTED, M, 36, Alignment::Left);
+    text_at(f, &format!("Account {}", account + 1), &FONT_8X13, MUTED, M, 48, Alignment::Left);
     if !home.network.is_empty() {
         let c = if home.network == MAINNET { AMBER } else { MUTED };
-        text_at(f, &home.network, &FONT_7X13, c, WIDTH as i32 - M, 36, Alignment::Right);
+        text_at(f, &home.network, &FONT_8X13, c, WIDTH as i32 - M, 48, Alignment::Right);
     }
     // the balance, large, with its unit
     let (s, on) = match home.balance {
         Some(w) => (qor4(w), INK),
         None => ("-.----".to_string(), MUTED),
     };
-    let unit_w = 3 * 7 + 6;
-    let seg = fit_seg(&s, WIDTH as i32 - 2 * M - unit_w, &[52, 44, 36, 28]);
-    seg.draw(f, &s, M, 56, on, BG);
-    text_at(f, "QOR", &FONT_7X13, MUTED, M + seg.width(&s) + 6, 56 + seg.h - 13, Alignment::Left);
+    let unit_w = 3 * 9 + 6;
+    let seg = fit_seg(&s, WIDTH as i32 - 2 * M - unit_w, &[60, 52, 44, 36, 28]);
+    seg.draw(f, &s, M, 78, on, BG);
+    text_at(f, "QOR", &FONT_9X18, MUTED, M + seg.width(&s) + 6, 78 + seg.h - 18, Alignment::Left);
 
-    divider(f, 124);
-    text_at(f, "Address", &FONT_6X10, MUTED, M, 134, Alignment::Left);
+    divider(f, 150);
+    text_at(f, "Address", &FONT_9X18, MUTED, M, 160, Alignment::Left);
     match (&home.address, home.address_ok) {
         (Some(_), Some(false)) => {
-            text_at(f, "The app's address is not", &FONT_7X13, RED, M, 150, Alignment::Left);
-            text_at(f, "this device's account", &FONT_7X13, RED, M, 168, Alignment::Left);
+            text_at(f, "The app's address is not", &FONT_9X18, RED, M, 192, Alignment::Left);
+            text_at(f, "this device's account", &FONT_9X18, RED, M, 216, Alignment::Left);
         }
-        (Some(a), _) => address(f, a, 150),
-        (None, _) => text_at(f, "-", &FONT_7X13, GHOST, M, 150, Alignment::Left),
+        (Some(a), _) => address(f, a, 190, &FONT_9X18, 3, 27),
+        (None, _) => text_at(f, "-", &FONT_9X18, GHOST, M, 192, Alignment::Left),
     }
 
-    // one status line, only when there is something to say
+    // the link to the companion app, always shown: yellow while it is not there, green when it is
     use crate::security::Trust;
-    let status = match trust {
+    let (color, line) = if home.app_seen { (GREEN, "Qorebit app connected") } else { (YELLOW, "Waiting for Qorebit app") };
+    let sy = HEIGHT as i32 - 24;
+    dot(f, M, sy + 2, color);
+    text_at(f, line, &FONT_8X13, color, M + 15, sy, Alignment::Left);
+    // anything else worth saying goes on the line above
+    let extra = match trust {
         Trust::Attacked(n) => Some((RED, format!("{n} glitch/tamper alarm{}", if n == 1 { "" } else { "s" }))),
-        _ if !home.app_seen => Some((MUTED, "Waiting for the Qorebit app".to_string())),
         _ if passphrase => Some((AMBER, "Passphrase wallet".to_string())),
         _ => None,
     };
-    if let Some((color, line)) = status {
-        fill(f, M, 222, 6, 6, color);
-        text_at(f, &line, &FONT_6X10, color, M + 12, 220, Alignment::Left);
+    if let Some((color, line)) = extra {
+        dot(f, M, sy - 24 + 2, color);
+        text_at(f, &line, &FONT_8X13, color, M + 15, sy - 24, Alignment::Left);
     }
 }
 
 fn boot(f: &mut Frame) {
     navbar(f, "");
-    text_at(f, "Starting", &FONT_9X18_BOLD, INK, WIDTH as i32 / 2, 100, Alignment::Center);
-    text_at(f, "deriving the signing key", &FONT_6X10, MUTED, WIDTH as i32 / 2, 124, Alignment::Center);
+    text_at(f, "Starting", &FONT_10X20, INK, WIDTH as i32 / 2, 120, Alignment::Center);
+    text_at(f, "deriving the signing key", &FONT_8X13, MUTED, WIDTH as i32 / 2, 150, Alignment::Center);
+}
+
+/// How many lines `address` takes: 5 groups of four characters on the first, 6 on each further one.
+fn address_lines(a: &str) -> i32 {
+    let groups = (a.len() as i32 + 3) / 4;
+    1 + ((groups - 5).max(0) + 5) / 6
 }
 
 /// A bech32 address in two lines of groups of four characters, alternate groups tinted so the
-/// eye can follow it ("qor1 r5v5 srda 7xfth3 ..."): 6 groups, then the rest.
-fn address(f: &mut Frame, a: &str, y: i32) {
+/// eye can follow it (the tint alternates by column, so a block sits under a block of the same colour): 5 groups on the first line, then 6 per
+/// line (a 20-byte address takes two lines, a multisig's 32-byte one three).
+fn address(f: &mut Frame, a: &str, y: i32, font: &MonoFont, gap: i32, line_h: i32) {
     let groups: Vec<&str> = a.as_bytes().chunks(4).map(|c| core::str::from_utf8(c).unwrap_or("?")).collect();
-    let gw = text_w("0000", &FONT_7X13) + 6;
+    let gw = text_w("0000", font) + gap;
     for (i, g) in groups.iter().enumerate() {
-        let (line, col) = (i as i32 / 6, i as i32 % 6);
-        let c = if i % 2 == 0 { INK } else { ADDR2 };
-        text_at(f, g, &FONT_7X13, c, M + col * gw, y + line * 15, Alignment::Left);
+        let (line, col) = if i < 5 { (0, i as i32) } else { (1 + (i as i32 - 5) / 6, (i as i32 - 5) % 6) };
+        // tint by column, so each block sits under a block of the same colour (clean vertical stripes)
+        let c = if col % 2 == 0 { INK } else { ADDR2 };
+        text_at(f, g, font, c, M + col * gw, y + line * line_h, Alignment::Left);
     }
 }
 
 fn approval(f: &mut Frame, a: &Approval, left: u8, timeout: u8) {
     navbar(f, a.tag);
     let need = |row: &Row| match row {
-        Row::Addr(..) => 41,
-        Row::Text(t) => 15 * wrap(t, 30).len().clamp(1, 5) as i32 + 2,
-        _ => 15,
+        Row::Addr(_, a) => 18 + 17 * address_lines(a),
+        Row::Text(t) => 18 * wrap(t, 25).len().clamp(1, 6) as i32 + 4,
+        _ => 18,
     };
-    let limit = BAR_Y - 6;
+    let limit = BAR_Y - 3;
     let mut y = NAV_H + 8;
     // a heading starting with BLIND warns that the screen can't show everything being signed
     let heading_color = if a.heading.starts_with("BLIND") { AMBER } else { MUTED };
-    text_at(f, a.heading, &FONT_7X13, heading_color, M, y, Alignment::Left);
-    y += 18;
-    if let Some((value, unit)) = &a.big {
+    for l in wrap(a.heading, 26).iter().take(2) {
+        text_at(f, l, &FONT_8X13, heading_color, M, y, Alignment::Left);
+        y += 16;
+    }
+    y += 8;
+    // with a long address (a multisig's) the big amount may not fit even at its smallest: it is then a plain row
+    let mut rows = a.rows.clone();
+    let mut big = a.big.clone();
+    if big.is_some() {
+        let rows_h: i32 = rows.iter().map(need).sum();
+        if limit - y - 24 - rows_h < 18 {
+            let (value, unit) = big.take().unwrap();
+            rows.insert(0, Row::Kv("Amount", format!("{value} {unit}")));
+        }
+    }
+    if let Some((value, unit)) = &big {
         // the amount gets the height the rows leave, within 18..=44 px
-        let rows_h: i32 = a.rows.iter().map(need).sum();
-        let room = limit - y - 17 - rows_h;
-        let sizes: Vec<i32> = [44, 40, 36, 32, 28, 24, 20, 18].into_iter().filter(|&h| h <= room).collect();
+        let rows_h: i32 = rows.iter().map(need).sum();
+        let room = limit - y - 24 - rows_h;
+        let sizes: Vec<i32> = [56, 52, 48, 44, 40, 36, 32, 28, 24, 20, 18].into_iter().filter(|&h| h <= room).collect();
         let sizes = if sizes.is_empty() { vec![18] } else { sizes };
         let unit_w = text_w(unit, &FONT_9X18_BOLD);
         let seg = fit_seg(value, WIDTH as i32 - 2 * M - unit_w - 8, &sizes);
         seg.draw(f, value, M, y, INK, BG);
         let ux = M + seg.width(value) + 8;
         text_at(f, unit, &FONT_9X18_BOLD, MUTED, ux, y + seg.h - 17, Alignment::Left);
-        y += seg.h + 10;
+        y += seg.h + 12;
     }
     divider(f, y);
-    y += 7;
-    for row in &a.rows {
+    y += 10;
+    for row in &rows {
         let need = need(row);
         if y + need > limit {
-            text_at(f, "...", &FONT_7X13, MUTED, M, y.min(limit - 13), Alignment::Left);
+            text_at(f, "...", &FONT_8X13, MUTED, M, y.min(limit - 13), Alignment::Left);
             break;
         }
         match row {
             Row::Addr(label, addr) => {
-                text_at(f, label, &FONT_6X10, MUTED, M, y, Alignment::Left);
-                address(f, addr, y + 13);
+                text_at(f, label, &FONT_8X13, MUTED, M, y, Alignment::Left);
+                address(f, addr, y + 16, &FONT_8X13, 6, 17);
             }
             Row::Kv(k, v) => {
-                text_at(f, k, &FONT_7X13, MUTED, M, y, Alignment::Left);
-                text_at(f, v, &FONT_7X13, INK, WIDTH as i32 - M, y, Alignment::Right);
+                // the larger font unless label and value would touch; then the smaller one
+                let font = if text_w(k, &FONT_8X13) + text_w(v, &FONT_8X13) + 16 > WIDTH as i32 - 2 * M { &FONT_7X13 } else { &FONT_8X13 };
+                text_at(f, k, font, MUTED, M, y, Alignment::Left);
+                text_at(f, v, font, INK, WIDTH as i32 - M, y, Alignment::Right);
             }
             Row::Text(t) => {
-                let lines = wrap(t, 30);
-                fill(f, M, y, 2, 15 * lines.len().clamp(1, 5) as i32 - 2, LINE);
-                for (i, l) in lines.iter().take(5).enumerate() {
-                    let l = if i == 4 && lines.len() > 5 { format!("{}...", &l[..l.len().min(26)]) } else { l.clone() };
-                    text_at(f, &l, &FONT_7X13, INK, M + 8, y + i as i32 * 15, Alignment::Left);
+                let lines = wrap(t, 25);
+                fill(f, M, y, 2, 18 * lines.len().clamp(1, 6) as i32 - 3, LINE);
+                for (i, l) in lines.iter().take(6).enumerate() {
+                    let l = if i == 5 && lines.len() > 6 { format!("{}...", &l[..l.len().min(21)]) } else { l.clone() };
+                    text_at(f, &l, &FONT_8X13, INK, M + 8, y + i as i32 * 18, Alignment::Left);
                 }
             }
             Row::Warn(t) => {
-                fill(f, M, y + 3, 6, 6, AMBER);
-                text_at(f, t, &FONT_7X13, AMBER, M + 12, y, Alignment::Left);
+                dot(f, M, y + 2, AMBER);
+                text_at(f, t, &FONT_8X13, AMBER, M + 15, y, Alignment::Left);
             }
         }
         y += need;
@@ -591,7 +627,7 @@ fn approval(f: &mut Frame, a: &Approval, left: u8, timeout: u8) {
     };
     fill(f, M, BAR_Y, full, 4, LINE);
     fill(f, M, BAR_Y, w, 4, tone);
-    text_at(f, &format!("{left}s"), &FONT_6X10, tone, WIDTH as i32 - M, BAR_Y - 3, Alignment::Right);
+    text_at(f, &format!("{left}s"), &FONT_7X13, tone, WIDTH as i32 - M, BAR_Y - 5, Alignment::Right);
 
     // the left button rejects, the right one approves
     buttons(f, ("REJECT", Btn::Bad), ("APPROVE", Btn::Good));
@@ -607,7 +643,7 @@ fn buttons(f: &mut Frame, left: (&str, Btn), right: (&str, Btn)) {
             Btn::Neutral => (INK, LINE),
         };
         RoundedRectangle::new(
-            Rectangle::new(Point::new(x, ACTIONS_Y), Size::new(bw as u32, 32)),
+            Rectangle::new(Point::new(x, ACTIONS_Y), Size::new(bw as u32, 28 + 2)),
             CornerRadii::new(Size::new(6, 6)),
         )
         .into_styled(PrimitiveStyle::with_fill(bg))
@@ -628,66 +664,66 @@ fn tone_color(t: Tone) -> Pal {
 
 fn input(f: &mut Frame, i: &Input) {
     navbar(f, i.tag);
-    let mut y = NAV_H + 8;
-    for line in wrap(&i.heading, 30).iter().take(2) {
-        text_at(f, line, &FONT_7X13, MUTED, M, y, Alignment::Left);
-        y += 15;
+    let mut y = NAV_H + 12;
+    for line in wrap(&i.heading, 26).iter().take(2) {
+        text_at(f, line, &FONT_8X13, MUTED, M, y, Alignment::Left);
+        y += 18;
     }
-    y += 6;
+    y += 8;
     match &i.body {
         Body::Pin { entered, total, note } => {
             let n = *total as i32;
-            let (bw, gap) = (22, 4);
+            let (bw, gap) = (24, 4);
             let x0 = (WIDTH as i32 - (n * bw + (n - 1) * gap)) / 2;
-            let by = y + 22;
+            let by = y + 28;
             for k in 0..n {
                 let x = x0 + k * (bw + gap);
                 let filled = k < *entered as i32;
-                RoundedRectangle::new(Rectangle::new(Point::new(x, by), Size::new(bw as u32, 30)), CornerRadii::new(Size::new(4, 4)))
+                RoundedRectangle::new(Rectangle::new(Point::new(x, by), Size::new(bw as u32, 40)), CornerRadii::new(Size::new(4, 4)))
                     .into_styled(PrimitiveStyle::with_fill(if filled { GHOST } else { BG }))
                     .draw(f)
                     .ok();
-                RoundedRectangle::new(Rectangle::new(Point::new(x, by), Size::new(bw as u32, 30)), CornerRadii::new(Size::new(4, 4)))
+                RoundedRectangle::new(Rectangle::new(Point::new(x, by), Size::new(bw as u32, 40)), CornerRadii::new(Size::new(4, 4)))
                     .into_styled(PrimitiveStyle::with_stroke(if k == *entered as i32 { INK } else { LINE }, 2))
                     .draw(f)
                     .ok();
                 if filled {
-                    fill(f, x + bw / 2 - 3, by + 12, 6, 6, INK);
+                    fill(f, x + bw / 2 - 4, by + 16, 8, 8, INK);
                 }
             }
-            text_at(f, "left = 0    right = 1", &FONT_6X10, MUTED, WIDTH as i32 / 2, by + 44, Alignment::Center);
+            text_at(f, "left = 0    right = 1", &FONT_8X13, MUTED, WIDTH as i32 / 2, by + 58, Alignment::Center);
             if let Some((tone, t)) = note {
-                for (k, l) in wrap(t, 30).iter().take(2).enumerate() {
-                    text_at(f, l, &FONT_7X13, tone_color(*tone), WIDTH as i32 / 2, by + 66 + k as i32 * 15, Alignment::Center);
+                for (k, l) in wrap(t, 26).iter().take(3).enumerate() {
+                    text_at(f, l, &FONT_8X13, tone_color(*tone), WIDTH as i32 / 2, by + 90 + k as i32 * 18, Alignment::Center);
                 }
             }
         }
         Body::Words(words) => {
             for (k, (n, w)) in words.iter().take(6).enumerate() {
-                let wy = y + k as i32 * 23;
-                text_at(f, &format!("{n:>2}"), &FONT_9X18_BOLD, MUTED, M, wy, Alignment::Left);
-                text_at(f, w, &FONT_9X18_BOLD, INK, M + 34, wy, Alignment::Left);
+                let wy = y + 6 + k as i32 * 32;
+                text_at(f, &format!("{n:>2}"), &FONT_10X20, MUTED, M, wy, Alignment::Left);
+                text_at(f, w, &FONT_10X20, INK, M + 40, wy, Alignment::Left);
             }
         }
         Body::Text(lines) => {
             for (tone, t) in lines {
-                for l in wrap(t, 30) {
-                    if y > ACTIONS_Y - 16 {
+                for l in wrap(t, 26) {
+                    if y > ACTIONS_Y - 20 {
                         break;
                     }
-                    text_at(f, &l, &FONT_7X13, tone.map(tone_color).unwrap_or(INK), M, y, Alignment::Left);
-                    y += 15;
+                    text_at(f, &l, &FONT_8X13, tone.map(tone_color).unwrap_or(INK), M, y, Alignment::Left);
+                    y += 18;
                 }
-                y += 5;
+                y += 8;
             }
         }
         Body::Pick { above, word, below } => {
-            text_at(f, above, &FONT_7X13, MUTED, WIDTH as i32 / 2, y + 6, Alignment::Center);
+            text_at(f, above, &FONT_8X13, MUTED, WIDTH as i32 / 2, y + 10, Alignment::Center);
             let w2 = text_w(word, &FONT_9X18_BOLD);
-            let mut d = Double(f, Point::new((WIDTH as i32 - 2 * w2) / 2, y + 32));
+            let mut d = Double(f, Point::new((WIDTH as i32 - 2 * w2) / 2, y + 48));
             Text::with_baseline(word, Point::zero(), MonoTextStyle::new(&FONT_9X18_BOLD, INK), Baseline::Top).draw(&mut d).ok();
-            for (k, l) in wrap(below, 30).iter().take(3).enumerate() {
-                text_at(f, l, &FONT_6X10, MUTED, WIDTH as i32 / 2, y + 82 + k as i32 * 12, Alignment::Center);
+            for (k, l) in wrap(below, 32).iter().take(4).enumerate() {
+                text_at(f, l, &FONT_7X13, MUTED, WIDTH as i32 / 2, y + 104 + k as i32 * 16, Alignment::Center);
             }
         }
     }
@@ -702,22 +738,22 @@ fn result(f: &mut Frame, tone: Tone, word: &str, lines: &[String]) {
     };
     navbar(f, "");
     // a full-width band in the result colour, the word at 2x
-    fill(f, 0, 62, WIDTH as i32, 64, bg);
-    fill(f, 0, 62, WIDTH as i32, 3, fg);
-    fill(f, 0, 123, WIDTH as i32, 3, fg);
+    fill(f, 0, 78, WIDTH as i32, 72, bg);
+    fill(f, 0, 78, WIDTH as i32, 3, fg);
+    fill(f, 0, 147, WIDTH as i32, 3, fg);
     let w2 = text_w(word, &FONT_9X18_BOLD);
-    let mut d = Double(f, Point::new((WIDTH as i32 - 2 * w2) / 2, 76));
+    let mut d = Double(f, Point::new((WIDTH as i32 - 2 * w2) / 2, 96));
     Text::with_baseline(word, Point::zero(), MonoTextStyle::new(&FONT_9X18_BOLD, fg), Baseline::Top).draw(&mut d).ok();
     for (i, l) in lines.iter().take(4).enumerate() {
         let c = if i == 0 { INK } else { MUTED };
-        text_at(f, l, &FONT_7X13, c, WIDTH as i32 / 2, 142 + i as i32 * 18, Alignment::Center);
+        text_at(f, l, &FONT_8X13, c, WIDTH as i32 / 2, 168 + i as i32 * 22, Alignment::Center);
     }
 }
 
 fn working(f: &mut Frame, word: &str, lines: &[String], permille: u16) {
     result(f, Tone::Good, word, lines);
     // the progress bar under the lines, and the percentage
-    let (x, y, w) = (M + 8, 196, WIDTH as i32 - 2 * (M + 8));
+    let (x, y, w) = (M + 8, 230, WIDTH as i32 - 2 * (M + 8));
     fill(f, x, y, w, 8, LINE);
     fill(f, x, y, w * permille.min(1000) as i32 / 1000, 8, GREEN);
     text_at(f, &format!("{}%", permille / 10), &FONT_7X13, MUTED, WIDTH as i32 / 2, y + 14, Alignment::Center);
@@ -870,7 +906,63 @@ mod tests {
             right: ("1".into(), Btn::Neutral),
             pin: true,
         });
+        let addr_b = "qor19ltfv6u4sfx6hz0veu6p80r69pleufhmvn2zmk".to_string();
+        let msig = Approval {
+            tag: "MULTISIG",
+            heading: "Create a multisig",
+            big: None,
+            rows: vec![
+                Row::Kv("Approvals", "2 of 4 members".into()),
+                Row::Kv("Member 1", "you".into()),
+                Row::Kv("Member 2", "qor19ltf..vn2zmk".into()),
+                Row::Kv("Member 3", "qor1r5v5..0qscza".into()),
+                Row::Kv("Member 4", "qor1zn2y..7ccpuz".into()),
+                Row::Kv("Voting", "1 day".into()),
+                Row::Kv("Max fee", "0.07 QOR".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
+        let propose = Approval {
+            tag: "PROPOSE",
+            heading: "Propose a multisig payment",
+            big: Some(("1.5".into(), "QOR")),
+            rows: vec![
+                Row::Kv("Multisig", "qor1zn2y..7ccpuz".into()),
+                Row::Addr("To", addr_b.clone()),
+                Row::Kv("Title", "Pay vendor".into()),
+                Row::Kv("Max fee", "0.05 QOR".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
+        let vote = Approval {
+            tag: "VOTE",
+            heading: "Vote on a multisig proposal",
+            big: None,
+            rows: vec![
+                Row::Kv("Proposal", "#7".into()),
+                Row::Kv("Your vote", "YES".into()),
+                Row::Kv("From", "Account 1".into()),
+                Row::Kv("Max fee", "0.02 QOR".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
+        let to_msig = Approval {
+            tag: "PROPOSE",
+            heading: "Propose a multisig payment",
+            big: Some(("25".into(), "QOR")),
+            rows: vec![
+                Row::Kv("Multisig", "qor1zn2y..7ccpuz".into()),
+                Row::Addr("To", "qor1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzseg3f79".to_string()),
+                Row::Kv("Title", "Fund treasury".into()),
+                Row::Kv("Max fee", "0.05 QOR".into()),
+                Row::Kv("Network", "qorechain-diana".into()),
+            ],
+        };
         let shots = [
+            ("19-propose-to-multisig", Screen::Approval(to_msig), 55),
+            ("16-multisig-create", Screen::Approval(msig), 55),
+            ("17-multisig-propose", Screen::Approval(propose), 55),
+            ("18-multisig-vote", Screen::Approval(vote), 55),
             ("1-idle", Screen::Idle { account: 0, home: demo_home(), trust: crate::security::Trust::Secure, passphrase: false }, 0),
             ("2-send", Screen::Approval(send), 47),
             ("3-mainnet-send", Screen::Approval(mainnet), 40),

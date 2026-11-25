@@ -1,4 +1,4 @@
-//! The real screen and buttons on the board (cargo feature `panel`): a 240x240 ST7789 IPS
+//! The real screen and buttons on the board (cargo feature `panel`): a 240x280 ST7789 IPS
 //! panel on SPI and two push buttons.
 //!
 //! **Untested on hardware**: written against the ST7789 datasheet and xous-core's SH1107 driver

@@ -5,7 +5,7 @@ import { DEFAULT_GAS, simulationTx } from "./tx";
 
 const base = (net: NetworkId) => restBase(net);
 
-async function getJson(net: NetworkId, path: string): Promise<{ status: number; json: any }> {
+export async function chainJson(net: NetworkId, path: string): Promise<{ status: number; json: any }> {
   const r = await fetch(`${base(net)}${path}`);
   let json: any = {};
   try {
@@ -23,7 +23,7 @@ export interface ChainAccount {
 
 /** `null` when the account does not exist on chain yet (it has never received anything). */
 export async function getAccount(net: NetworkId, address: string): Promise<ChainAccount | null> {
-  const { status, json } = await getJson(net, `/cosmos/auth/v1beta1/accounts/${address}`);
+  const { status, json } = await chainJson(net, `/cosmos/auth/v1beta1/accounts/${address}`);
   if (status === 404 || (status !== 200 && /not found/i.test(JSON.stringify(json)))) return null;
   if (status !== 200) throw new Error(`the ${net} node answered ${status}: ${json?.message ?? "unknown error"}`);
   const a = json.account ?? {};
@@ -32,7 +32,7 @@ export async function getAccount(net: NetworkId, address: string): Promise<Chain
 }
 
 export async function getBalance(net: NetworkId, address: string): Promise<bigint> {
-  const { status, json } = await getJson(net, `/cosmos/bank/v1beta1/balances/${address}`);
+  const { status, json } = await chainJson(net, `/cosmos/bank/v1beta1/balances/${address}`);
   if (status !== 200) throw new Error(`the ${net} node answered ${status}`);
   return BigInt((json.balances ?? []).find((c: any) => c.denom === "uqor")?.amount ?? 0);
 }
@@ -48,7 +48,7 @@ export async function signBytes(net: NetworkId, chainId: string): Promise<"v1" |
 
 /** The chain id the node reports: the wallet refuses to sign for a node that is on another chain. */
 export async function nodeChainId(net: NetworkId): Promise<string> {
-  const { status, json } = await getJson(net, "/cosmos/base/tendermint/v1beta1/node_info");
+  const { status, json } = await chainJson(net, "/cosmos/base/tendermint/v1beta1/node_info");
   if (status !== 200) throw new Error(`the ${net} node answered ${status}`);
   return json.default_node_info?.network as string;
 }
@@ -77,7 +77,7 @@ export interface TxResult {
 /** Wait for the transaction to be included (the networks make a block every few seconds). */
 export async function waitForTx(net: NetworkId, hash: string, seconds = 60): Promise<TxResult> {
   for (let i = 0; i < seconds * 2; i++) {
-    const { status, json } = await getJson(net, `/cosmos/tx/v1beta1/txs/${hash}`);
+    const { status, json } = await chainJson(net, `/cosmos/tx/v1beta1/txs/${hash}`);
     if (status === 200 && json.tx_response) {
       const t = json.tx_response;
       return { code: Number(t.code ?? 0), rawLog: String(t.raw_log ?? ""), height: String(t.height ?? "") };
@@ -100,7 +100,7 @@ export interface Activity {
 /** Recent transfers and other transactions of an account (two event queries, merged). */
 export async function history(net: NetworkId, address: string, limit = 12): Promise<Activity[]> {
   const q = (query: string) =>
-    getJson(net, `/cosmos/tx/v1beta1/txs?query=${encodeURIComponent(query)}&limit=${limit}&order_by=ORDER_BY_DESC`).then((r) => (r.status === 200 ? r.json : { tx_responses: [] }));
+    chainJson(net, `/cosmos/tx/v1beta1/txs?query=${encodeURIComponent(query)}&limit=${limit}&order_by=ORDER_BY_DESC`).then((r) => (r.status === 200 ? r.json : { tx_responses: [] }));
   const [sent, got] = await Promise.all([q(`message.sender='${address}'`), q(`transfer.recipient='${address}'`)]);
   const seen = new Map<string, Activity>();
   for (const t of [...(sent.tx_responses ?? []), ...(got.tx_responses ?? [])]) {

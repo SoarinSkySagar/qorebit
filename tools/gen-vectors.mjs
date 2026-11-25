@@ -13,6 +13,8 @@ import { TxBody, AuthInfo, SignerInfo, Fee, ModeInfo } from "cosmjs-types/cosmos
 import { SignMode } from "cosmjs-types/cosmos/tx/signing/v1beta1/signing";
 import { PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
 import { MsgDelegate } from "cosmjs-types/cosmos/staking/v1beta1/tx";
+import { MsgCreateGroupWithPolicy, MsgSubmitProposal, MsgVote, MsgExec } from "cosmjs-types/cosmos/group/v1/tx";
+import { ThresholdDecisionPolicy, PercentageDecisionPolicy } from "cosmjs-types/cosmos/group/v1/types";
 
 const h = (b) => toHex(b);
 const hs = (b) => toHex(sha256(b));
@@ -69,4 +71,33 @@ const popMsg = proofOfPossessionMessage({ chainId: "qorechain-local", account: a
 const pop = signProofOfPossession({ chainId: "qorechain-local", account: acct.address, pqKey });
 const reg = buildRegisterPqKeyMessage({ chainId: "qorechain-local", account: acct.address, pqKey, classicalPublicKey: classical.publicKey });
 out.register = { chainId: "qorechain-local", popMessage: new TextDecoder().decode(popMsg), popSigSha256: hs(pop), msgValueSha256: hs(reg.value), msgTypeUrl: reg.typeUrl };
+
+// multisig (the chain's group module): messages as cosmjs-types encodes them, with what the device must read from each
+const member1 = out.accounts[1].address;
+const policyAddr = to; // any valid address stands in for a group policy account
+const any = (typeUrl, value) => ({ typeUrl, value });
+const thr = (t, secs) => any("/cosmos.group.v1.ThresholdDecisionPolicy", ThresholdDecisionPolicy.encode(ThresholdDecisionPolicy.fromPartial({ threshold: t, windows: { votingPeriod: { seconds: BigInt(secs), nanos: 0 }, minExecutionPeriod: { seconds: 0n, nanos: 0 } } })).finish());
+const wrap = (typeUrl, value) => { const body = TxBody.encode(TxBody.fromPartial({ messages: [{ typeUrl, value }] })).finish(); return h(body); };
+const groupMsgs = [];
+const add = (name, typeUrl, value, expect) => groupMsgs.push({ name, body: wrap(typeUrl, value), expect });
+add("create-2of2", "/cosmos.group.v1.MsgCreateGroupWithPolicy",
+  MsgCreateGroupWithPolicy.encode(MsgCreateGroupWithPolicy.fromPartial({ admin: acct.address, members: [{ address: acct.address, weight: "1", metadata: "" }, { address: member1, weight: "1", metadata: "" }], groupMetadata: "team", groupPolicyMetadata: "", groupPolicyAsAdmin: false, decisionPolicy: thr("2", 86400) })).finish(),
+  { kind: "create", admin: acct.address, members: [acct.address, member1], threshold: "2", votingSecs: 86400 });
+add("create-weighted", "/cosmos.group.v1.MsgCreateGroupWithPolicy",
+  MsgCreateGroupWithPolicy.encode(MsgCreateGroupWithPolicy.fromPartial({ admin: acct.address, members: [{ address: acct.address, weight: "3", metadata: "" }, { address: member1, weight: "1", metadata: "" }], decisionPolicy: thr("2", 3600) })).finish(),
+  { kind: "create", admin: acct.address, members: [acct.address, member1], threshold: "2", votingSecs: 3600, weights: ["3", "1"] });
+add("create-percentage", "/cosmos.group.v1.MsgCreateGroupWithPolicy",
+  MsgCreateGroupWithPolicy.encode(MsgCreateGroupWithPolicy.fromPartial({ admin: acct.address, members: [{ address: acct.address, weight: "1", metadata: "" }], decisionPolicy: any("/cosmos.group.v1.PercentageDecisionPolicy", PercentageDecisionPolicy.encode(PercentageDecisionPolicy.fromPartial({ percentage: "0.5", windows: { votingPeriod: { seconds: 600n, nanos: 0 }, minExecutionPeriod: { seconds: 0n, nanos: 0 } } })).finish()) })).finish(),
+  { kind: "create", admin: acct.address, members: [acct.address], percentage: "0.5", votingSecs: 600 });
+const sendFromPolicy = (amount) => any("/cosmos.bank.v1beta1.MsgSend", MsgSend.encode(MsgSend.fromPartial({ fromAddress: policyAddr, toAddress: member1, amount: [{ denom: "uqor", amount }] })).finish());
+add("propose-send", "/cosmos.group.v1.MsgSubmitProposal",
+  MsgSubmitProposal.encode(MsgSubmitProposal.fromPartial({ groupPolicyAddress: policyAddr, proposers: [acct.address], metadata: "", messages: [sendFromPolicy("1500000")], exec: 0, title: "Pay vendor", summary: "Invoice 42" })).finish(),
+  { kind: "propose", policy: policyAddr, proposers: [acct.address], title: "Pay vendor", innerTo: member1, innerAmount: "1500000", innerFrom: policyAddr });
+add("propose-two-actions", "/cosmos.group.v1.MsgSubmitProposal",
+  MsgSubmitProposal.encode(MsgSubmitProposal.fromPartial({ groupPolicyAddress: policyAddr, proposers: [acct.address], messages: [sendFromPolicy("1"), sendFromPolicy("2")], title: "Two", summary: "" })).finish(),
+  { kind: "propose", policy: policyAddr, proposers: [acct.address], title: "Two", innerCount: 2 });
+add("vote-yes", "/cosmos.group.v1.MsgVote", MsgVote.encode(MsgVote.fromPartial({ proposalId: 7n, voter: acct.address, option: 1, metadata: "", exec: 0 })).finish(), { kind: "vote", proposalId: 7, voter: acct.address, option: 1 });
+add("vote-for-someone-else", "/cosmos.group.v1.MsgVote", MsgVote.encode(MsgVote.fromPartial({ proposalId: 7n, voter: member1, option: 1 })).finish(), { kind: "vote", proposalId: 7, voter: member1, option: 1 });
+add("exec", "/cosmos.group.v1.MsgExec", MsgExec.encode(MsgExec.fromPartial({ proposalId: 7n, executor: acct.address })).finish(), { kind: "exec", proposalId: 7, executor: acct.address });
+out.group = { me: acct.address, member1, policy: policyAddr, messages: groupMsgs };
 console.log(JSON.stringify(out, null, 1));

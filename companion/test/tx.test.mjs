@@ -64,3 +64,51 @@ test("the simulation copy carries a placeholder post-quantum layer, the original
   assert.ok(raw.length > 4627 + 64);
   assert.ok(TxBody.decode(body).extensionOptions.length === 0);
 });
+
+// ---- multisig (the chain's group module)
+import { MsgCreateGroupWithPolicy, MsgSubmitProposal, MsgVote, MsgExec } from "cosmjs-types/cosmos/group/v1/tx";
+import { ThresholdDecisionPolicy } from "cosmjs-types/cosmos/group/v1/types";
+import { MsgSend as BankSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { createMultisigMsg, proposePaymentMsg, voteMsg, execMsg } from "../src/multisigMsgs.ts";
+
+const ME = "qor1r5v5srda7xfth3hn2s26txvrcrntldju0qscza";
+const OTHER = "qor1zn2y6duvgcda5htklazv9etu7kwstg0d7ccpuz";
+const POLICY = "qor1dlszg2sst9r69my4f84l3mj66zxcf3umcgujys30t84srg95dgvst4knx5"; // a real group account: 32 bytes
+
+test("a multisig's own account (32 bytes, 62 characters) is a valid destination", () => {
+  assert.equal(isQorAddress(POLICY), true);
+  assert.equal(isQorAddress(ME), true);
+  assert.equal(isQorAddress(POLICY.slice(0, -1) + "q"), false, "a bad checksum is refused");
+  assert.equal(isQorAddress(POLICY.slice(0, 60)), false, "a truncated address is refused");
+  assert.equal(isQorAddress("cosmos1" + ME.slice(4)), false, "another prefix is refused");
+});
+
+test("creating a multisig: admin, equal-weight members, a threshold policy and a voting window", () => {
+  const m = createMultisigMsg({ admin: ME, members: [ME, OTHER], threshold: 2, votingSeconds: 86400, name: "team" });
+  assert.equal(m.typeUrl, "/cosmos.group.v1.MsgCreateGroupWithPolicy");
+  const d = MsgCreateGroupWithPolicy.decode(m.value);
+  assert.equal(d.admin, ME);
+  assert.deepEqual(d.members.map((x) => [x.address, x.weight]), [[ME, "1"], [OTHER, "1"]]);
+  assert.equal(d.decisionPolicy.typeUrl, "/cosmos.group.v1.ThresholdDecisionPolicy");
+  const p = ThresholdDecisionPolicy.decode(d.decisionPolicy.value);
+  assert.equal(p.threshold, "2");
+  assert.equal(p.windows.votingPeriod.seconds, 86400n);
+});
+
+test("proposing a payment: the payment is from the multisig account, one message", () => {
+  const m = proposePaymentMsg({ policy: POLICY, proposer: ME, to: OTHER, uqor: 2_500_000n, title: "Pay vendor" });
+  const d = MsgSubmitProposal.decode(m.value);
+  assert.equal(d.groupPolicyAddress, POLICY);
+  assert.deepEqual(d.proposers, [ME]);
+  assert.equal(d.title, "Pay vendor");
+  assert.equal(d.messages.length, 1);
+  const send = BankSend.decode(d.messages[0].value);
+  assert.deepEqual([send.fromAddress, send.toAddress, send.amount[0].amount], [POLICY, OTHER, "2500000"]);
+});
+
+test("voting and running: the proposal number and the member's own address", () => {
+  const v = MsgVote.decode(voteMsg(7n, ME, 1).value);
+  assert.deepEqual([v.proposalId, v.voter, v.option], [7n, ME, 1]);
+  const e = MsgExec.decode(execMsg(7n, ME).value);
+  assert.deepEqual([e.proposalId, e.executor], [7n, ME]);
+});

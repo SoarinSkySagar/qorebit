@@ -5,7 +5,7 @@ Qorebit runs on the **Baochip-1x Dabao** board. There are two ways to use it, an
 | Mode | Screen | Button | Wiring |
 |---|---|---|---|
 | **Virtual display** (`make flash-virtual`, `make board-virtual`) | a window on your laptop | the two buttons in the window | none: USB-C only |
-| **Panel** (`make flash-panel`, `make board-panel`) | an ST7789 240x240 SPI display on the board | two buttons on **PB1** (left) and **PB2** (right) | the table below |
+| **Panel** (`make flash-panel`, `make board-panel`) | an ST7789 240x280 (1.69") SPI display on the board | two buttons on **PB1** (left) and **PB2** (right) | the table below |
 
 ## Pin connections for the panel build
 
@@ -35,7 +35,7 @@ The two buttons, each a normal momentary switch to GND, no external resistor (th
 **left = PB1 to GND = 0 = reject**, **right = PB2 to GND = 1 = approve**. One press is the answer.
 
 ```
- Dabao                         ST7789 (240x240)
+ Dabao                         ST7789 (240x280)
  PC0  ───────────────────────  SCL
  PC1  ───────────────────────  SDA
  PC2  ───────────────────────  DC

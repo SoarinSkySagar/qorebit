@@ -2,7 +2,7 @@
 """Qorebit virtual display and bridge: the hardware-wallet screen and its two buttons in a window on
 the laptop, for firmware built with `--vdisplay` (the default until a real panel).
 
-The screen is rendered **on the chip** into a 240x240 colour framebuffer (16-colour palette,
+The screen is rendered **on the chip** into a 240x280 colour framebuffer (16-colour palette,
 ST7789-class panel). The chip sends the rows that changed, run-length encoded, with the
 palette; this window only maps indices to colours. The real panel gets the same frame.
 
@@ -40,7 +40,7 @@ STATUS_TEXT = {1: "bad request", 2: "unknown command", 4: "signing failed", 5: "
                6: "no hardware engine", 9: "rejected", 10: "no approval UI", 11: "refused by the device",
                13: "no PIN", 14: "PIN locked"}
 PQ_SIG_LEN, PQ_PK_LEN = 4627, 2592
-SCALE = 2                  # 240x240 panel shown at 2x
+SCALE = 2                  # the 240x280 panel shown at 2x
 POLL_S = 0.1
 FLAG_CLASSICAL_ONLY, FLAG_INCLUDE_PQ_KEY, FLAG_SIGN_BYTES_V1 = 1, 2, 4
 
@@ -521,7 +521,7 @@ def run_window(dev, screen, status, title):
     import pygame
 
     pygame.init()
-    PW = PH = 240 * SCALE
+    PW, PH = 240 * SCALE, 280 * SCALE
     W, H = PW + 80, PH + 200
     win = pygame.display.set_mode((W, H))
     pygame.display.set_caption(title)

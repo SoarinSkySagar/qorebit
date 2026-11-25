@@ -120,3 +120,21 @@ pre.code { text-align: left; background: var(--bg); border: 1px solid var(--line
 footer { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 28px; }
 
 .warn-text { color: var(--amber); }
+
+/* ---- multisig */
+.msig { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.msig h3 { font-size: 14px; margin: 18px 0 8px; }
+.msig-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.msig-head .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.msig-facts { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.break { word-break: break-all; }
+.msig-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 4px; }
+.msig-tabs button.on { border-color: var(--green); color: var(--green); }
+.proposals { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.proposals li { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px; background: var(--panel-2); }
+.row.between { justify-content: space-between; }
+.msig-create { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.msig-create summary { cursor: pointer; font-weight: 650; }
+.msig-create form { margin-top: 12px; }
+form textarea, form select { display: block; margin-top: 5px; font-size: 15px; }
+textarea, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; width: 100%; }

@@ -29,6 +29,14 @@ pub const MSG_SEND: &str = "/cosmos.bank.v1beta1.MsgSend";
 pub const MSG_DELEGATE: &str = "/cosmos.staking.v1beta1.MsgDelegate";
 pub const MSG_UNDELEGATE: &str = "/cosmos.staking.v1beta1.MsgUndelegate";
 pub const MSG_WITHDRAW_REWARD: &str = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward";
+pub const MSG_GROUP_CREATE: &str = "/cosmos.group.v1.MsgCreateGroupWithPolicy";
+pub const MSG_GROUP_PROPOSE: &str = "/cosmos.group.v1.MsgSubmitProposal";
+pub const MSG_GROUP_VOTE: &str = "/cosmos.group.v1.MsgVote";
+pub const MSG_GROUP_EXEC: &str = "/cosmos.group.v1.MsgExec";
+pub const GROUP_THRESHOLD_POLICY: &str = "/cosmos.group.v1.ThresholdDecisionPolicy";
+pub const GROUP_PERCENTAGE_POLICY: &str = "/cosmos.group.v1.PercentageDecisionPolicy";
+/// Most members of a multisig the device creates (they are all shown on its screen).
+pub const MAX_DEVICE_MEMBERS: usize = 4;
 pub const SECP256K1_PUBKEY: &str = "/cosmos.crypto.secp256k1.PubKey";
 pub const POP_DOMAIN: &str = "qorechain-pqc-pop-v1";
 pub const HYBRID_V2_DOMAIN: &str = "qorechain-pqc-hybrid-v2";
@@ -99,8 +107,25 @@ pub enum Msg {
     Undelegate { delegator: String, validator: String, amount: Coin },
     WithdrawReward { delegator: String, validator: String },
     RegisterPqKey { account: String, public_key: Vec<u8>, algorithm: u64, classical: Vec<u8>, key_type: String, proof: Vec<u8> },
+    /// A multisig (the chain's group module): create a group of members with a decision policy.
+    GroupCreate { admin: String, members: Vec<(String, String)>, policy: GroupPolicy, voting_secs: u64, policy_as_admin: bool },
+    /// A proposal in a multisig: the group policy account runs `inner` once enough members vote yes.
+    GroupPropose { policy: String, proposers: Vec<String>, title: String, exec_now: bool, inner: Vec<Msg> },
+    /// A member's vote on a proposal (option 1 yes, 2 abstain, 3 no, 4 no with veto).
+    GroupVote { proposal_id: u64, voter: String, option: u64 },
+    /// Run a proposal that has passed.
+    GroupExec { proposal_id: u64, executor: String },
     /// Any other message: the device can show only its type and a short fingerprint (BLIND).
     Other { type_url: String, len: usize, id: [u8; 4] },
+}
+
+/// A multisig's decision policy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GroupPolicy {
+    /// This much total member weight must vote yes.
+    Threshold(String),
+    /// This fraction (0..1, as a decimal string) of the total weight must vote yes.
+    Percentage(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,10 +159,91 @@ fn text(fs: &[Field], num: u32) -> Result<String, TxError> {
 }
 
 fn message(type_url: &str, value: &[u8]) -> Result<Msg, TxError> {
+    message_at(type_url, value, 0)
+}
+
+/// An `Any`: (type url, value).
+fn any_parts(b: &[u8]) -> Result<(String, Vec<u8>), TxError> {
+    let a = proto::fields(b).ok_or(TxError::Malformed("any"))?;
+    Ok((string(proto::find(&a, 1).unwrap_or(&[]))?, proto::find(&a, 2).unwrap_or(&[]).to_vec()))
+}
+
+fn strings(fs: &[Field], num: u32) -> Result<Vec<String>, TxError> {
+    fs.iter().filter(|f| f.num == num && f.wire == Wire::Len).map(|f| string(f.bytes)).collect()
+}
+
+fn varint_of(fs: &[Field], num: u32) -> u64 {
+    fs.iter().find(|f| f.num == num && f.wire == Wire::Varint).map_or(0, |f| f.varint)
+}
+
+/// A multisig's decision policy `Any`: (policy, voting period in seconds). `None` for a policy the device
+/// does not know (the whole message is then shown BLIND).
+fn group_policy(any: &[u8]) -> Result<Option<(GroupPolicy, u64)>, TxError> {
+    let (url, value) = any_parts(any)?;
+    let fs = proto::fields(&value).ok_or(TxError::Malformed("decision policy"))?;
+    let secs = |fs: &[Field]| -> Result<u64, TxError> {
+        let w = proto::fields(proto::find(fs, 2).unwrap_or(&[])).ok_or(TxError::Malformed("decision policy windows"))?;
+        let d = proto::fields(proto::find(&w, 1).unwrap_or(&[])).ok_or(TxError::Malformed("voting period"))?;
+        Ok(varint_of(&d, 1))
+    };
+    Ok(match url.as_str() {
+        GROUP_THRESHOLD_POLICY => Some((GroupPolicy::Threshold(text(&fs, 1)?), secs(&fs)?)),
+        GROUP_PERCENTAGE_POLICY => Some((GroupPolicy::Percentage(text(&fs, 1)?), secs(&fs)?)),
+        _ => None,
+    })
+}
+
+fn message_at(type_url: &str, value: &[u8], depth: u8) -> Result<Msg, TxError> {
     // a message the device can't show is not parsed at all: it is shown BLIND, by type and fingerprint
-    let known = [MSG_SEND, MSG_DELEGATE, MSG_UNDELEGATE, MSG_WITHDRAW_REWARD, MSG_REGISTER_PQC_KEY_V2];
-    let fs = if known.contains(&type_url) { proto::fields(value).ok_or(TxError::Malformed("message"))? } else { Vec::new() };
+    let known = [
+        MSG_SEND, MSG_DELEGATE, MSG_UNDELEGATE, MSG_WITHDRAW_REWARD, MSG_REGISTER_PQC_KEY_V2,
+        MSG_GROUP_CREATE, MSG_GROUP_PROPOSE, MSG_GROUP_VOTE, MSG_GROUP_EXEC,
+    ];
+    let group = matches!(type_url, MSG_GROUP_CREATE | MSG_GROUP_PROPOSE | MSG_GROUP_VOTE | MSG_GROUP_EXEC);
+    // group messages are not nested in a proposal (a proposal inside a proposal is shown BLIND)
+    let known_here = known.contains(&type_url) && !(group && depth > 0);
+    let fs = if known_here { proto::fields(value).ok_or(TxError::Malformed("message"))? } else { Vec::new() };
+    if !known_here {
+        let h = Sha256::digest(value);
+        return Ok(Msg::Other { type_url: type_url.to_string(), len: value.len(), id: h[..4].try_into().unwrap() });
+    }
     Ok(match type_url {
+        MSG_GROUP_CREATE => {
+            let mut members = Vec::new();
+            for f in fs.iter().filter(|f| f.num == 2 && f.wire == Wire::Len) {
+                let m = proto::fields(f.bytes).ok_or(TxError::Malformed("member"))?;
+                members.push((text(&m, 1)?, text(&m, 2)?));
+            }
+            match proto::find(&fs, 6).map(group_policy).transpose()?.flatten() {
+                Some((policy, voting_secs)) => Msg::GroupCreate {
+                    admin: text(&fs, 1)?,
+                    members,
+                    policy,
+                    voting_secs,
+                    policy_as_admin: varint_of(&fs, 5) != 0,
+                },
+                None => {
+                    let h = Sha256::digest(value);
+                    Msg::Other { type_url: type_url.to_string(), len: value.len(), id: h[..4].try_into().unwrap() }
+                }
+            }
+        }
+        MSG_GROUP_PROPOSE => {
+            let mut inner = Vec::new();
+            for f in fs.iter().filter(|f| f.num == 4 && f.wire == Wire::Len) {
+                let (url, val) = any_parts(f.bytes)?;
+                inner.push(message_at(&url, &val, depth + 1)?);
+            }
+            Msg::GroupPropose {
+                policy: text(&fs, 1)?,
+                proposers: strings(&fs, 2)?,
+                title: text(&fs, 6)?,
+                exec_now: varint_of(&fs, 5) != 0,
+                inner,
+            }
+        }
+        MSG_GROUP_VOTE => Msg::GroupVote { proposal_id: varint_of(&fs, 1), voter: text(&fs, 2)?, option: varint_of(&fs, 3) },
+        MSG_GROUP_EXEC => Msg::GroupExec { proposal_id: varint_of(&fs, 1), executor: text(&fs, 2)? },
         MSG_SEND => Msg::Send { from: text(&fs, 1)?, to: text(&fs, 2)?, amount: coins(&fs, 3)? },
         MSG_DELEGATE | MSG_UNDELEGATE => {
             let (delegator, validator) = (text(&fs, 1)?, text(&fs, 2)?);
@@ -299,6 +405,55 @@ pub fn check(v: &View, acct: &mut Account, chain_id: &str, mode: Mode) -> Result
         (Msg::Delegate { delegator, .. } | Msg::Undelegate { delegator, .. } | Msg::WithdrawReward { delegator, .. }, Mode::Hybrid) => {
             signer_ok(delegator)
         }
+        (Msg::GroupCreate { admin, members, policy, .. }, Mode::Hybrid) => {
+            signer_ok(admin)?;
+            if members.is_empty() || members.len() > MAX_DEVICE_MEMBERS {
+                return refuse(format!("the device creates a multisig of 1 to {MAX_DEVICE_MEMBERS} members (it shows them all)"));
+            }
+            // equal weights, so "threshold" reads as "that many members must vote yes"
+            if members.iter().any(|(a, w)| a.is_empty() || w != "1") {
+                return refuse("the device creates multisigs of equal-weight members (weight 1 each)");
+            }
+            let mut seen: Vec<&String> = members.iter().map(|m| &m.0).collect();
+            seen.sort();
+            seen.dedup();
+            if seen.len() != members.len() {
+                return refuse("the same member is listed twice");
+            }
+            match policy {
+                GroupPolicy::Threshold(t) => match t.parse::<u64>() {
+                    Ok(n) if n >= 1 && n as usize <= members.len() => Ok(()),
+                    _ => refuse("the threshold must be a whole number from 1 to the number of members"),
+                },
+                GroupPolicy::Percentage(_) => refuse("the device creates threshold multisigs (N of M members)"),
+            }
+        }
+        (Msg::GroupPropose { proposers, inner, policy, .. }, Mode::Hybrid) => {
+            if proposers.len() != 1 || proposers[0] != me {
+                return refuse("the proposer must be this account (and only it)");
+            }
+            if policy.is_empty() {
+                return refuse("the proposal names no multisig");
+            }
+            if inner.len() != 1 {
+                return refuse("the device shows one action per proposal");
+            }
+            // what the multisig would do must be from the multisig itself
+            let from_policy = |who: &str| if who == policy { Ok(()) } else { refuse("the proposed action is not from the multisig account") };
+            match &inner[0] {
+                Msg::Send { from, .. } => from_policy(from),
+                Msg::Delegate { delegator, .. } | Msg::Undelegate { delegator, .. } | Msg::WithdrawReward { delegator, .. } => {
+                    from_policy(delegator)
+                }
+                Msg::Other { .. } => Ok(()),
+                _ => refuse("the device does not show this kind of proposed action"),
+            }
+        }
+        (Msg::GroupVote { voter, option, .. }, Mode::Hybrid) => {
+            signer_ok(voter)?;
+            if (1..=4).contains(option) { Ok(()) } else { refuse("unknown vote option") }
+        }
+        (Msg::GroupExec { executor, .. }, Mode::Hybrid) => signer_ok(executor),
         (Msg::Other { .. }, Mode::Hybrid) => Ok(()),
         (Msg::RegisterPqKey { .. }, Mode::Hybrid) => refuse("a key registration is signed classical-only"),
         (Msg::RegisterPqKey { account, public_key, algorithm, classical, key_type, proof }, Mode::ClassicalOnly) => {

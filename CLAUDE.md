@@ -55,6 +55,16 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 - The Keccak engines (combohash, BIO) are gone: ML-DSA on the CPU is the fast path. BIO is only for the panel.
 - Stop processes by exact PID / process group only, never broad `pkill -f` patterns.
 
+## Multisig (the chain's group module)
+
+- Messages the device reads: `MsgCreateGroupWithPolicy` (threshold policy, <= 4 members, weight 1 each, no duplicates, admin = this
+  account), `MsgSubmitProposal` (proposer = this account only, exactly one inner message from the group policy account: send, delegate,
+  undelegate, claim; anything else inside shows BLIND), `MsgVote` (voter = this account), `MsgExec` (executor = this account).
+  Everything else about a group is not signed unless it shows BLIND. Test vectors for them come from `cosmjs-types`
+  (`tools/gen-vectors.mjs`, `crates/qorebit-signer/tests/group.rs`); `make test-emu` runs the whole cycle against the node.
+- A group policy account is 32 bytes (62-character `qor1…`): addresses wrap onto three lines on the screen (`screen.rs::address`).
+- The chain marks a proposal accepted only when it is run or its voting time ends: use the live tally (`/proposals/{id}/tally`).
+
 ## Rules
 
 - Approval of a transaction happens on the device, never only in the companion. Never add an API that signs a bare

@@ -3,7 +3,7 @@ import { TxBody, AuthInfo, SignerInfo, Fee, ModeInfo } from "cosmjs-types/cosmos
 import { SignMode } from "cosmjs-types/cosmos/tx/signing/v1beta1/signing";
 import { PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
 import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
-import { appendExtension, encodePqcHybridSignature, encodeTxRaw, parseAddress, PQC_HYBRID_TYPE_URL } from "@qorechain/qoresign";
+import { appendExtension, encodePqcHybridSignature, encodeTxRaw, PQC_HYBRID_TYPE_URL } from "@qorechain/qoresign";
 
 export interface AnyMsg {
   typeUrl: string;
@@ -28,13 +28,29 @@ export function formatQor(uqor: bigint, maxDecimals = 6): string {
   return frac ? `${whole.toLocaleString("en-US")}.${frac}` : whole.toLocaleString("en-US");
 }
 
-export function isQorAddress(s: string): boolean {
-  try {
-    parseAddress(s);
-    return s.startsWith("qor1") && s === s.toLowerCase();
-  } catch {
-    return false;
+const BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+function bech32Polymod(values: number[]): number {
+  const gen = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= gen[i];
   }
+  return chk >>> 0;
+}
+
+/** A `qor1…` address with a good bech32 checksum: 20 bytes (an account) or 32 bytes (a multisig's own account). */
+export function isQorAddress(s: string): boolean {
+  if (s !== s.toLowerCase()) return false;
+  const i = s.lastIndexOf("1");
+  if (i !== 3 || s.slice(0, i) !== "qor") return false;
+  const data = [...s.slice(i + 1)].map((c) => BECH32.indexOf(c));
+  if (data.length < 7 || data.some((v) => v < 0)) return false;
+  const hrp = [...s.slice(0, i)].map((c) => c.charCodeAt(0));
+  if (bech32Polymod([...hrp.map((c) => c >> 5), 0, ...hrp.map((c) => c & 31), ...data]) !== 1) return false;
+  const bytes = Math.floor(((data.length - 6) * 5) / 8);
+  return bytes === 20 || bytes === 32;
 }
 
 export const sendMsg = (from: string, to: string, uqor: bigint): AnyMsg => ({

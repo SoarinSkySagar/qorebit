@@ -162,7 +162,7 @@ screens: ## render every device screen to PNGs in screens/ (no device needed)
 	mkdir -p $(ROOT)/screens
 	cd $(FW) && QOREBIT_SCREENS=$(ROOT)/screens cargo test --release dump_screens -q
 	@$(PY) -c "import os,sys; os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'; import pygame; d='$(ROOT)/screens'; \
-	  [pygame.image.save(pygame.transform.scale(pygame.image.load(os.path.join(d,f)),(480,480)), os.path.join(d,f[:-4]+'.png')) or os.remove(os.path.join(d,f)) for f in os.listdir(d) if f.endswith('.ppm')]"
+	  [pygame.image.save(pygame.transform.scale(pygame.image.load(os.path.join(d,f)),(480,560)), os.path.join(d,f[:-4]+'.png')) or os.remove(os.path.join(d,f)) for f in os.listdir(d) if f.endswith('.ppm')]"
 	@echo "screens in $(ROOT)/screens"
 
 ## ---- the four ways to run it (pick one) --------------------------------

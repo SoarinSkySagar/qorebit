@@ -8,7 +8,7 @@ import {
   addressFromPublicKey, buildRegisterPqKeyMessage, deriveCanonicalPqKey, deriveClassicalKey, parseAddress, signHybrid,
 } from "@qorechain/qoresign";
 import { broadcastTx, fetchPqKeyStatus, resolveSignBytesVersion } from "@qorechain/qoresign/network";
-import { accountInfo, buildTx, restOf, sendMsg, waitTx } from "./qorelib.mjs";
+import { accountInfo, buildTx, isQorAddress, restOf, sendMsg, waitTx } from "./qorelib.mjs";
 
 const CHAIN_ID = "qorechain-local";
 const FAUCET_WORDS = Array(23).fill("abandon").concat("art").join(" ");
@@ -18,7 +18,7 @@ if (!to) {
   console.error("usage: node tools/fund.mjs <qor1... address> [uqor]");
   process.exit(2);
 }
-try { parseAddress(to); } catch { console.error(`not a qor1 address: ${to}`); process.exit(2); }
+if (!isQorAddress(to)) { console.error(`not a qor1 address: ${to}`); process.exit(2); }
 if (!/^[0-9]+$/.test(amount) || BigInt(amount) > 100_000_000_000n) { console.error("amount in uqor, at most 100,000 QOR"); process.exit(2); }
 
 const rest = restOf("devnet");
