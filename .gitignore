@@ -60,3 +60,6 @@ devnet/node.log
 
 # ---- companion build output
 companion/dist/
+
+# ---- browser extension build output
+extension/dist/
