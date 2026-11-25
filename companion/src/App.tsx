@@ -73,6 +73,8 @@ export function App() {
       setSecurity(await device.security());
       setDeviceError(null);
     } catch (e) {
+      // the device is busy with an approval or a PIN: keep what is shown, this poll will be answered next time
+      if (e instanceof DeviceError && e.code === 8) return;
       setDeviceError(explain(e));
     }
   }, []);
@@ -140,7 +142,9 @@ export function App() {
       if (!chainAcct) throw new Error("this account does not exist on chain yet: send it some QOR first");
       await ensureChain();
       setWait({ what: "Prove your post-quantum key", hint: "Check the device: press the right button to approve, then your PIN." });
-      const [proof, pk] = await Promise.all([device.registerProof(index, info.chainId), device.pqPublicKey(index)]);
+      // one after the other: the device runs one job at a time
+      const proof = await device.registerProof(index, info.chainId);
+      const pk = await device.pqPublicKey(index);
       const classical = fromHex(a.publicKey);
       const msg = registerPqKeyMsg(a.bech32, fromHex(pk.publicKey), classical, fromHex(proof.proof));
       const { body, authInfo } = buildTx({ messages: [msg], publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS });

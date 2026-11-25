@@ -241,8 +241,24 @@ def poll_result(dev):
     return dev.call(CMD_RESULT)
 
 
+# One device job at a time. A second request that arrives while a job waits for the user (an approval, a
+# PIN) would be told BUSY and then collect that job's RESULT, stealing the answer meant for the first
+# caller. The website polls the device every few seconds, so this really happened: the signature the user
+# approved on the device never reached the website. So concurrent callers are refused, not queued.
+_job_lock = threading.Lock()
+
+
 def call_job(dev, cmd, payload=b"", wait=180):
-    """Run a device command to completion, following PENDING / BUSY."""
+    """Run a device command to completion, following PENDING / BUSY. Refuses (BUSY) while another job runs."""
+    if not _job_lock.acquire(timeout=3):
+        raise DeviceError(BUSY, "the device is busy with another request: finish it on the device first")
+    try:
+        return _run_job(dev, cmd, payload, wait)
+    finally:
+        _job_lock.release()
+
+
+def _run_job(dev, cmd, payload, wait):
     st, p = dev.call(cmd, payload)
     deadline = time.time() + wait
     while st in (PENDING, BUSY) and time.time() < deadline:
