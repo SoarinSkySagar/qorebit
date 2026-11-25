@@ -64,6 +64,16 @@ static LAST_HOST_MS: AtomicU32 = AtomicU32::new(0);
 /// The companion polls every few seconds; this long without a request means it is gone.
 const LINK_TIMEOUT_MS: u32 = 15_000;
 
+/// The home screen shows whether the companion app is connected: called often (the display loop, the display
+/// polls) it notices when the app has gone quiet for `LINK_TIMEOUT_MS`.
+pub(crate) fn link_tick() {
+    let last = LAST_HOST_MS.load(Ordering::Relaxed);
+    let up = last != 0 && host_clock_ms().wrapping_sub(last) < LINK_TIMEOUT_MS;
+    if up != ui::link_up() {
+        ui::ui().set_link(up);
+    }
+}
+
 fn host_clock_ms() -> u32 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     // 32 bits (the chip has no 64-bit atomics): wraps after 49 days, which `wrapping_sub` below survives;
@@ -114,30 +124,6 @@ fn big_qor(c: &tx::Coin) -> Option<(String, &'static str)> {
     (c.denom == "uqor").then(|| (p.trim_end_matches(" QOR").to_string(), "QOR")).filter(|(n, _)| !n.contains(' '))
 }
 
-/// "1 day", "12 hours", "30 minutes", "45 s": a voting period.
-fn duration_text(secs: u64) -> String {
-    let unit = |n: u64, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
-    if secs > 0 && secs % 86400 == 0 {
-        unit(secs / 86400, "day", "days")
-    } else if secs > 0 && secs % 3600 == 0 {
-        unit(secs / 3600, "hour", "hours")
-    } else if secs > 0 && secs % 60 == 0 {
-        unit(secs / 60, "minute", "minutes")
-    } else {
-        format!("{secs} s")
-    }
-}
-
-/// A free-text title as the device shows it: plain ASCII, at most `max` characters.
-fn title_text(t: &str, max: usize) -> String {
-    let t: String = t.chars().map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { '?' }).collect();
-    if t.chars().count() > max {
-        format!("{}..", t.chars().take(max - 2).collect::<String>())
-    } else {
-        t
-    }
-}
-
 /// What the approval screen shows for `view`. Everything the device signs is on it, or the
 /// heading says BLIND.
 fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen::Approval {
@@ -181,78 +167,25 @@ fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen:
             }
             ("REGISTER", "Register your post-quantum key", None)
         }
-        Msg::GroupCreate { members, policy, voting_secs, policy_as_admin, .. } => {
-            let need = match policy {
-                tx::GroupPolicy::Threshold(t) => format!("{t} of {} members", members.len()),
-                tx::GroupPolicy::Percentage(p) => format!("{p} of the weight"),
+        // a multisig (the chain's group module) message: the board says so and names the action; the details
+        // (members, amounts, the proposal) are read on the website, so the screen says that too
+        Msg::Other { type_url, len, id } if type_url.starts_with("/cosmos.group.v1.") => {
+            let action = match type_url.rsplit('.').next().unwrap_or("") {
+                "MsgCreateGroupWithPolicy" | "MsgCreateGroup" | "MsgCreateGroupPolicy" => "Create multisig",
+                "MsgSubmitProposal" => "Propose",
+                "MsgVote" => "Vote",
+                "MsgExec" => "Run proposal",
+                "MsgWithdrawProposal" => "Withdraw proposal",
+                "MsgUpdateGroupMembers" | "MsgUpdateGroupAdmin" | "MsgUpdateGroupMetadata" => "Change members",
+                "MsgUpdateGroupPolicyAdmin" | "MsgUpdateGroupPolicyDecisionPolicy" | "MsgUpdateGroupPolicyMetadata" => "Change policy",
+                "MsgLeaveGroup" => "Leave multisig",
+                _ => "Multisig action",
             };
-            rows.push(Row::Kv("Approvals", need));
-            for (i, (addr, _)) in members.iter().take(tx::MAX_DEVICE_MEMBERS).enumerate() {
-                let label = ["Member 1", "Member 2", "Member 3", "Member 4"][i];
-                let who = if *addr == acct.address_bech { "you".to_string() } else { short(addr) };
-                rows.push(Row::Kv(label, who));
-            }
-            rows.push(Row::Kv("Voting", duration_text(*voting_secs)));
-            if *policy_as_admin {
-                rows.push(Row::Warn("The multisig runs the group".into()));
-            }
-            ("MULTISIG", "Create a multisig", None)
-        }
-        Msg::GroupPropose { policy, title, inner, exec_now, .. } => {
-            rows.push(Row::Kv("Multisig", short(policy)));
-            let mut big = None;
-            let heading: &'static str = match inner.first() {
-                Some(Msg::Send { to, amount, .. }) => {
-                    rows.push(Row::Addr("To", to.clone()));
-                    big = (amount.len() == 1).then(|| big_qor(&amount[0])).flatten();
-                    if big.is_none() {
-                        rows.push(Row::Kv("Amount", coins_text(amount)));
-                    }
-                    "Propose a multisig payment"
-                }
-                Some(Msg::Delegate { validator, amount, .. }) => {
-                    rows.push(Row::Kv("Validator", short(validator)));
-                    big = big_qor(amount);
-                    "Propose: multisig stakes"
-                }
-                Some(Msg::Undelegate { validator, amount, .. }) => {
-                    rows.push(Row::Kv("Validator", short(validator)));
-                    big = big_qor(amount);
-                    "Propose: multisig unstakes"
-                }
-                Some(Msg::WithdrawReward { validator, .. }) => {
-                    rows.push(Row::Kv("Validator", short(validator)));
-                    "Propose: claim rewards"
-                }
-                Some(Msg::Other { type_url, .. }) => {
-                    rows.push(Row::Warn("BLIND action in this proposal".into()));
-                    rows.push(Row::Kv("Type", type_url.rsplit('.').next().unwrap_or(type_url).to_string()));
-                    "Propose a multisig action"
-                }
-                _ => "Propose a multisig action",
-            };
-            rows.push(Row::Kv("Title", title_text(title, 22)));
-            if *exec_now {
-                rows.push(Row::Warn("Runs at once if it passes".into()));
-            }
-            ("PROPOSE", heading, big)
-        }
-        Msg::GroupVote { proposal_id, option, .. } => {
-            rows.push(Row::Kv("Proposal", format!("#{proposal_id}")));
-            let vote = match option {
-                1 => "YES",
-                2 => "ABSTAIN",
-                3 => "NO",
-                _ => "NO + VETO",
-            };
-            rows.push(Row::Kv("Your vote", vote.into()));
+            rows.push(Row::Kv("Action", action.to_string()));
+            rows.push(Row::Warn("Details: see website".into()));
+            rows.push(Row::Kv("Size / id", format!("{len} bytes / {}", id.iter().map(|b| format!("{b:02x}")).collect::<String>())));
             rows.push(from);
-            ("VOTE", "Vote on a multisig proposal", None)
-        }
-        Msg::GroupExec { proposal_id, .. } => {
-            rows.push(Row::Kv("Proposal", format!("#{proposal_id}")));
-            rows.push(from);
-            ("EXECUTE", "Run a passed multisig proposal", None)
+            ("MULTISIG", "Multisig transaction", None)
         }
         Msg::Other { type_url, len, id } => {
             let name = type_url.rsplit('.').next().unwrap_or(type_url);
@@ -899,6 +832,7 @@ impl transport::Handler for Dispatcher {
         }
         // the screen is read and the button pressed while a job waits for a decision
         if body[1] == protocol::CMD_DISPLAY_POLL {
+            link_tick();
             let p = &body[2..];
             let since = (p.len() >= 4).then(|| u32::from_be_bytes(p[0..4].try_into().unwrap()));
             return protocol::response(Status::Ok, &encode_snapshot(ui::ui().poll(since)));
@@ -1005,19 +939,6 @@ fn main() -> ! {
     // the screen and the button on the board
     #[cfg(all(target_os = "xous", feature = "panel"))]
     panel::spawn();
-    // the home screen shows whether the companion app is connected; this notices when it goes away
-    std::thread::Builder::new()
-        .name("qorebit-link".into())
-        .stack_size(16 * 1024)
-        .spawn(|| loop {
-            std::thread::sleep(Duration::from_secs(1));
-            let last = LAST_HOST_MS.load(Ordering::Relaxed);
-            let up = last != 0 && host_clock_ms().wrapping_sub(last) < LINK_TIMEOUT_MS;
-            if up != ui::link_up() {
-                ui::ui().set_link(up);
-            }
-        })
-        .expect("link thread");
     // the boot job counts as pending until its reply is collected
     transport::serve(Dispatcher { to_worker, from_worker, busy: true, boot_job: true, started: Instant::now() })
 }

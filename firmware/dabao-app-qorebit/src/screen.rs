@@ -906,63 +906,20 @@ mod tests {
             right: ("1".into(), Btn::Neutral),
             pin: true,
         });
-        let addr_b = "qor19ltfv6u4sfx6hz0veu6p80r69pleufhmvn2zmk".to_string();
-        let msig = Approval {
-            tag: "MULTISIG",
-            heading: "Create a multisig",
-            big: None,
-            rows: vec![
-                Row::Kv("Approvals", "2 of 4 members".into()),
-                Row::Kv("Member 1", "you".into()),
-                Row::Kv("Member 2", "qor19ltf..vn2zmk".into()),
-                Row::Kv("Member 3", "qor1r5v5..0qscza".into()),
-                Row::Kv("Member 4", "qor1zn2y..7ccpuz".into()),
-                Row::Kv("Voting", "1 day".into()),
-                Row::Kv("Max fee", "0.07 QOR".into()),
-                Row::Kv("Network", "qorechain-diana".into()),
-            ],
-        };
-        let propose = Approval {
-            tag: "PROPOSE",
-            heading: "Propose a multisig payment",
-            big: Some(("1.5".into(), "QOR")),
-            rows: vec![
-                Row::Kv("Multisig", "qor1zn2y..7ccpuz".into()),
-                Row::Addr("To", addr_b.clone()),
-                Row::Kv("Title", "Pay vendor".into()),
-                Row::Kv("Max fee", "0.05 QOR".into()),
-                Row::Kv("Network", "qorechain-diana".into()),
-            ],
-        };
-        let vote = Approval {
-            tag: "VOTE",
-            heading: "Vote on a multisig proposal",
-            big: None,
-            rows: vec![
-                Row::Kv("Proposal", "#7".into()),
-                Row::Kv("Your vote", "YES".into()),
-                Row::Kv("From", "Account 1".into()),
-                Row::Kv("Max fee", "0.02 QOR".into()),
-                Row::Kv("Network", "qorechain-diana".into()),
-            ],
-        };
         let to_msig = Approval {
-            tag: "PROPOSE",
-            heading: "Propose a multisig payment",
+            tag: "SEND",
+            heading: "Send",
             big: Some(("25".into(), "QOR")),
             rows: vec![
-                Row::Kv("Multisig", "qor1zn2y..7ccpuz".into()),
                 Row::Addr("To", "qor1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzseg3f79".to_string()),
-                Row::Kv("Title", "Fund treasury".into()),
+                Row::Kv("From", "Account 1".into()),
                 Row::Kv("Max fee", "0.05 QOR".into()),
                 Row::Kv("Network", "qorechain-diana".into()),
             ],
         };
         let shots = [
-            ("19-propose-to-multisig", Screen::Approval(to_msig), 55),
-            ("16-multisig-create", Screen::Approval(msig), 55),
-            ("17-multisig-propose", Screen::Approval(propose), 55),
-            ("18-multisig-vote", Screen::Approval(vote), 55),
+            ("16-send-to-a-long-address", Screen::Approval(to_msig), 55),
+            ("17-multisig", Screen::Approval(Approval { tag: "MULTISIG", heading: "Multisig transaction", big: None, rows: vec![Row::Kv("Action", "Vote".into()), Row::Warn("Details: see website".into()), Row::Kv("Size / id", "112 bytes / 9f3a01c2".into()), Row::Kv("From", "Account 1".into()), Row::Kv("Max fee", "0.02 QOR".into()), Row::Kv("Network", "qorechain-diana".into())] }), 55),
             ("1-idle", Screen::Idle { account: 0, home: demo_home(), trust: crate::security::Trust::Secure, passphrase: false }, 0),
             ("2-send", Screen::Approval(send), 47),
             ("3-mainnet-send", Screen::Approval(mainnet), 40),

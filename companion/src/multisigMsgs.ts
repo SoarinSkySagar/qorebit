@@ -4,8 +4,8 @@ import { ThresholdDecisionPolicy } from "cosmjs-types/cosmos/group/v1/types";
 import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
 import type { AnyMsg } from "./tx";
 
-/** The device creates multisigs of at most this many members: it shows every one of them on its screen. */
-export const MAX_MEMBERS = 4;
+/** A sanity limit for the form (the chain has its own). */
+export const MAX_MEMBERS = 12;
 
 export type VoteOption = 1 | 2 | 3 | 4; // yes, abstain, no, no with veto
 export const VOTE_NAME: Record<number, string> = { 1: "Yes", 2: "Abstain", 3: "No", 4: "No with veto" };

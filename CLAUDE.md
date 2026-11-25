@@ -55,15 +55,17 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 - The Keccak engines (combohash, BIO) are gone: ML-DSA on the CPU is the fast path. BIO is only for the panel.
 - Stop processes by exact PID / process group only, never broad `pkill -f` patterns.
 
-## Multisig (the chain's group module)
+## Multisig (the chain's group module): companion only
 
-- Messages the device reads: `MsgCreateGroupWithPolicy` (threshold policy, <= 4 members, weight 1 each, no duplicates, admin = this
-  account), `MsgSubmitProposal` (proposer = this account only, exactly one inner message from the group policy account: send, delegate,
-  undelegate, claim; anything else inside shows BLIND), `MsgVote` (voter = this account), `MsgExec` (executor = this account).
-  Everything else about a group is not signed unless it shows BLIND. Test vectors for them come from `cosmjs-types`
-  (`tools/gen-vectors.mjs`, `crates/qorebit-signer/tests/group.rs`); `make test-emu` runs the whole cycle against the node.
-- A group policy account is 32 bytes (62-character `qor1…`): addresses wrap onto three lines on the screen (`screen.rs::address`).
+- The board only labels multisig: any `/cosmos.group.v1.*` message shows a MULTISIG screen with the action name and "Details: check the
+  website" (no decoding of members, amounts or proposals; the signer treats it as `Msg::Other`). The user chose this: "on the board we
+  simply need to sign", but "there should be text specifying it's a multisig txn". Everything multisig lives in `companion/src/multisig*.ts` and `Multisig.tsx`; `make test-emu` runs the whole
+  cycle (create 2-of-2, fund, propose, two votes, run) against the node.
+- A group policy account is 32 bytes (62-character `qor1…`): the screen wraps addresses onto three lines (`screen.rs::address`) and the
+  companion accepts 20- and 32-byte addresses (`isQorAddress`).
 - The chain marks a proposal accepted only when it is run or its voting time ends: use the live tally (`/proposals/{id}/tally`).
+- The app image must fit the Dabao's app region (893,696 bytes); `build.sh` fails above it, and Cargo.toml optimises for size except the
+  signature crates. An image over the limit flashes fine and never starts (the board then answers nothing over USB).
 
 ## Rules
 

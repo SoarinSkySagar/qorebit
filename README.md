@@ -34,12 +34,11 @@ With Claude Code, run **`/setup`** (or `/setup emu`): it does the steps above an
 
 ### Multisig
 
-Shared accounts ("N of M must agree") use QoreChain's group module, so no special signing mode is needed: creating a
-multisig, proposing a payment, voting and running it are each an ordinary transaction that one member approves on their
-own device. The device decodes these messages itself (it shows every member and the threshold, the proposed payment, the
-proposal number and your vote), and refuses what is not its own account's. Limits: threshold multisigs of up to 4
-equal-weight members created on the device, one proposed action per proposal; the device cannot read the chain, so for
-votes it shows the proposal number. See [walkthrough.md](walkthrough.md) (section 6c).
+Shared accounts ("N of M must agree") use QoreChain's group module, so the board needs nothing special: creating a
+multisig, proposing a payment, voting and running it are each an ordinary transaction that one member signs with their
+own device. The companion app builds and explains them (the **Multisig** card); the board signs them and its screen says
+**MULTISIG** and names the action (create, propose, vote, run), but not the details, so check those on the website
+before you approve. See [walkthrough.md](walkthrough.md) (section 6c).
 
 ### The two buttons
 

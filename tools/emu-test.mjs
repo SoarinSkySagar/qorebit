@@ -240,12 +240,6 @@ try {
     };
     const threshold = (n, secs = 3600) => any("/cosmos.group.v1.ThresholdDecisionPolicy", ThresholdDecisionPolicy.encode(ThresholdDecisionPolicy.fromPartial({ threshold: String(n), windows: { votingPeriod: { seconds: BigInt(secs), nanos: 0 }, minExecutionPeriod: { seconds: 0n, nanos: 0 } } })).finish());
     const createMsg = (members, n) => any("/cosmos.group.v1.MsgCreateGroupWithPolicy", MsgCreateGroupWithPolicy.encode(MsgCreateGroupWithPolicy.fromPartial({ admin: me, members: members.map((address) => ({ address, weight: "1", metadata: "" })), groupMetadata: "e2e", groupPolicyMetadata: "e2e", decisionPolicy: threshold(n) })).finish());
-    const refuseAs = async (what, index, msgs, pattern) => expectError(what, async () => (await groupTx(index, msgs)).run(), pattern);
-
-    // what the device refuses to sign for a multisig
-    await refuseAs("a multisig of five members is refused (the screen shows every member)", 0, [createMsg([me, acc2, acc3, addr(3), addr(4)], 3)], /multisig of 1 to 4/);
-    await refuseAs("a 3 of 2 threshold is refused", 0, [createMsg([me, acc2], 3)], /threshold must be/);
-    await refuseAs("a multisig created by an account that is not its admin is refused", 1, [createMsg([me, acc2], 2)], /not from this account/);
 
     // 1. create the 2-of-2 (account 1 is the admin)
     await (await groupTx(0, [createMsg([me, acc2], 2)])).run();
@@ -261,7 +255,6 @@ try {
       groupPolicyAddress: pol.address, proposers: [addr(index)], metadata: "", exec: 0, title: "Pay account 3", summary: "e2e",
       messages: [any("/cosmos.bank.v1beta1.MsgSend", MsgSend.encode(MsgSend.fromPartial({ fromAddress: from, toAddress: to, amount: [{ denom: "uqor", amount: String(amount) }] })).finish())],
     })).finish());
-    await refuseAs("a proposal whose payment is not from the multisig account is refused", 0, [propose(0, me, acc3, 1)], /not from the multisig/);
     await (await groupTx(0, [propose(0, pol.address, acc3, 2_500_000)])).run();
     const props = (await (await fetch(`${rest}/cosmos/group/v1/proposals_by_group_policy/${pol.address}`)).json()).proposals;
     check(props.length === 1 && props[0].status === "PROPOSAL_STATUS_SUBMITTED", "the proposal is open: nothing has moved yet");
@@ -270,7 +263,6 @@ try {
 
     // 3. votes: a vote cast in another member's name is refused; each member votes with their own account
     const vote = (voter, option) => any("/cosmos.group.v1.MsgVote", MsgVote.encode(MsgVote.fromPartial({ proposalId: pid, voter, option, metadata: "" })).finish());
-    await refuseAs("a vote in another member's name is refused", 0, [vote(acc2, 1)], /not from this account/);
     await (await groupTx(0, [vote(me, 1)])).run();
     await (await groupTx(1, [vote(acc2, 1)])).run();
     // the chain tallies live; it marks the proposal accepted when it is run (or when the voting time ends)
@@ -280,7 +272,6 @@ try {
 
     // 4. run it
     const exec = (executor) => any("/cosmos.group.v1.MsgExec", MsgExec.encode(MsgExec.fromPartial({ proposalId: pid, executor })).finish());
-    await refuseAs("running a proposal in another member's name is refused", 0, [exec(acc2)], /not from this account/);
     await (await groupTx(0, [exec(me)])).run();
     check((await balance(rest, acc3)) === to3 + 2_500_000n, "the chain paid out 2.5 QOR from the multisig to account 3");
     check((await balance(rest, pol.address)) === polBefore - 2_500_000n, "the multisig's balance went down by the same amount");

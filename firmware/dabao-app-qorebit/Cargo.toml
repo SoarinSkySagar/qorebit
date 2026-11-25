@@ -61,4 +61,23 @@ debug = false
 strip = false
 lto = "fat"
 incremental = true
+# The Dabao's app region is 893,696 bytes (APP_RRAM_LEN in bao1x-api): an image above it never starts. So everything is
+# optimised for size, except the signature crates, where speed matters (ML-DSA-87 signs in ~0.3 s).
+opt-level = "s"
+
+[profile.release.package.fips204]
+opt-level = 3
+[profile.release.package.k256]
+opt-level = 3
+[profile.release.package.crypto-bigint]
+opt-level = 3
+[profile.release.package.sha2]
+opt-level = 3
+[profile.release.package.sha3]
+opt-level = 3
+[profile.release.package.hmac]
+opt-level = 3
+[profile.release.package.ripemd]
+opt-level = 3
+[profile.release.package.qorebit-signer]
 opt-level = 3

@@ -55,6 +55,17 @@ if [ "$what" = device ] || [ "$what" = all ]; then
     cargo build --release --target riscv32imac-unknown-xous-elf --features board-dabao,bao1x "${panel_feat[@]}" "${feat_default[@]}"
     app_elf="$(pwd)/target/riscv32imac-unknown-xous-elf/release/qorebit"
     (cd "$XOUS" && cargo xtask dabao "$app_elf" --feature usb-bao1x/generic-hid)
+    # The Dabao runs an app only if its image fits the app region (APP_RRAM_LEN in bao1x-api/offsets/dabao.rs:
+    # 0xDA000 + the 768-byte signature block). An image above it is flashed fine and then never starts.
+    app_img="$XOUS/target/riscv32imac-unknown-xous-elf/release/apps.img"
+    app_limit=$((0xDA000 + 768))
+    app_size=$(stat -c %s "$app_img" 2>/dev/null || stat -f %z "$app_img")
+    echo "app image:       $app_size bytes of $app_limit ($((app_size * 100 / app_limit))%)"
+    if [ "$app_size" -gt "$app_limit" ]; then
+        echo "ERROR: the app image is $((app_size - app_limit)) bytes over the Dabao's app region: it would never start." >&2
+        echo "       Shrink it (opt-level 's' in Cargo.toml, drop a dependency or a font)." >&2
+        exit 1
+    fi
     echo "device images:   $XOUS/target/riscv32imac-unknown-xous-elf/release/{loader,xous,apps}.uf2"
     # what was built, for comparing a flashed board or another build with this one
     imgs="$XOUS/target/riscv32imac-unknown-xous-elf/release"

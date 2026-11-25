@@ -420,6 +420,7 @@ pub fn spawn() {
                         lvl(low[0]), presses[0], lvl(low[1]), presses[1]
                     ));
                 }
+                crate::link_tick();
                 std::thread::sleep(POLL);
             }
         })

@@ -91,24 +91,22 @@ still happens on the device.
 
 A **multisig** is an account owned by several people, where moving funds needs "N of M" of them to agree. QoreChain does it
 with its group module: the multisig has an account of its own (a long `qor1…` address, 62 characters), and each step is
-an ordinary transaction that **one member approves on their own device**: create it, *propose* a payment, *vote*, then *run* it.
-Nothing is held by the website.
+an ordinary transaction that **one member signs with their own device**: create it, *propose* a payment, *vote*, then *run* it.
+Nothing is held by the website, and the board needs no multisig features: it only signs.
 
 In the website, the **Multisig** card:
 
 1. **Create.** Open *Create a multisig*, paste the other members' `qor1…` addresses (you are added for you), pick how many
-   approvals are needed and the voting time, *Create on the device*. The device lists every member and the threshold
-   (at most 4 members, equal votes: it shows them all, so it refuses what it cannot show).
+   approvals are needed and the voting time, *Create with the device*.
 2. **Fund it.** Copy the multisig's address and send QOR to it with the normal *Send* card.
-3. **Propose a payment.** To, amount, a title, *Propose on the device*. The device shows the amount, the recipient and the title.
-4. **Vote.** Each member opens the same page with their own device and votes Yes / No / Abstain. The device shows the
-   proposal number and your choice.
+3. **Propose a payment.** To, amount, a title, *Propose with the device*.
+4. **Vote.** Each member opens the same page with their own device and votes Yes / No / Abstain.
 5. **Run it.** Once enough members voted yes the proposal shows *Passed: ready to run*. Any member runs it (*Run it*), and the
    chain pays out.
 
-What the device can and cannot check: it reads each message itself and refuses one that is not from your own account
-(a vote in another member's name, a proposal whose payment is not from the multisig). It cannot read the chain, so for a
-vote it shows the proposal **number**: read what the proposal does on the website and check the number matches.
+On the board each of these shows a **MULTISIG** screen naming the action (Create multisig, Propose, Vote, Run proposal) with
+a note that the details are on the website. The board signs them without reading the members or amounts, so read the
+details on the website first.
 
 Multisig works on the local devnet and the testnet. `make test-emu` runs the whole cycle with two device accounts.
 

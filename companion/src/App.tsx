@@ -216,7 +216,7 @@ export function App() {
 
   /** One transaction with these messages from the selected account: fee from the node, the device reads and
    *  signs it, the network takes it. True when it was included and succeeded. (Used by the multisig card.) */
-  async function submit(what: string, msgs: AnyMsg[]): Promise<boolean> {
+  async function submit(what: string, msgs: AnyMsg[], hint = "Check the device screen and compare it with what you asked for. Right button approves, left button rejects."): Promise<boolean> {
     setNotice(null);
     try {
       const a = needAccount();
@@ -229,7 +229,7 @@ export function App() {
       const { gas } = await gasFor(net, probe.body, probe.authInfo);
       const { body, authInfo } = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas });
       if ((balance ?? 0n) < fee(gas)) throw new Error(`not enough QOR for the network fee of ${formatQor(fee(gas))}`);
-      setWait({ what, hint: "Check the device screen and compare it with what you asked for. Right button approves, left button rejects." });
+      setWait({ what, hint });
       const signed = await device.signTx({
         account: index, accountNumber: chainAcct.accountNumber, chainId: info.chainId, body: toHex(body), authInfo: toHex(authInfo),
         signBytes: await signBytes(net, info.chainId),

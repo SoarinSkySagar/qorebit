@@ -8,6 +8,8 @@ import {
 } from "./multisig";
 import { formatQor, isQorAddress, parseQor, type AnyMsg } from "./tx";
 
+/** The board labels these as a multisig transaction and signs them; the details are checked here, before approving. */
+const BLIND_HINT = "The device shows MULTISIG and the action (create, propose, vote, run). It does not show the details: they are on this page, so check them here first. Right button approves, left button rejects.";
 const short = (s: string, a = 10, b = 6) => (s.length > a + b + 2 ? `${s.slice(0, a)}…${s.slice(-b)}` : s);
 const norm = (s: string) => {
   const t = s.trim().replace(/\s+/g, "");
@@ -21,7 +23,7 @@ interface Props {
   /** Why nothing can be signed now ("" when it can). */
   why: string;
   /** Build, sign on the device, broadcast and wait: true when it landed on chain. */
-  onSubmit: (what: string, msgs: AnyMsg[]) => Promise<boolean>;
+  onSubmit: (what: string, msgs: AnyMsg[], hint?: string) => Promise<boolean>;
 }
 
 export function MultisigCard({ net, info, acct, why, onSubmit }: Props) {
@@ -76,7 +78,7 @@ export function MultisigCard({ net, info, acct, why, onSubmit }: Props) {
   async function run(what: string, msgs: AnyMsg[]) {
     setBusy(true);
     try {
-      const ok = await onSubmit(what, msgs);
+      const ok = await onSubmit(what, msgs, BLIND_HINT);
       if (ok) await Promise.all([load(), loadDetail()]);
       return ok;
     } finally {
@@ -90,7 +92,8 @@ export function MultisigCard({ net, info, acct, why, onSubmit }: Props) {
       <h2>Multisig</h2>
       <p className="muted small">
         A shared account that needs several members to agree. Moving its funds takes a proposal, enough yes votes, then a run. Each step is
-        approved on a member's own device. Only the chain's own group accounts are used: nothing is held by this app.
+        signed by one member's own device (it shows MULTISIG and the action there, not the details: check them on this page first). Only the chain's own
+        group accounts are used: nothing is held by this app.
       </p>
       {error && <div className="field-error">{error}</div>}
       {list === null && !error && <p className="muted">Loading…</p>}
@@ -154,7 +157,7 @@ function Detail(p: { m: Multisig; me: string; balance: bigint | null; proposals:
         <label>Amount (QOR)<input className="mono" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" inputMode="decimal" autoComplete="off" /></label>
         <label>Title<input value={title} maxLength={60} onChange={(e) => setTitle(e.target.value)} placeholder="What is this for?" autoComplete="off" /></label>
         <div className="row">
-          <button className="primary" type="submit" disabled={!can}>Propose on the device</button>
+          <button className="primary" type="submit" disabled={!can}>Propose with the device</button>
           <span className={`small ${can ? "muted" : "warn-text"}`}>{can ? "Nothing moves until enough members vote yes." : p.why || need}</span>
         </div>
       </form>
@@ -202,7 +205,7 @@ function ProposalRow(p: { pr: Proposal; m: Multisig; me: string; off: boolean; r
         </div>
       )}
       {(open && !pr.voted) || ready ? (
-        <div className="muted small">The device shows the proposal number (#{pr.id}) and your choice. It cannot read the chain: check the number matches.</div>
+        <div className="muted small">The device shows MULTISIG and the action, not the details (it cannot read the chain). Check the proposal here before you approve.</div>
       ) : null}
     </li>
   );
@@ -219,7 +222,7 @@ function Create(p: { me: string; off: boolean; why: string; info: NetworkInfo; r
   const dup = new Set(addrs).size !== addrs.length || addrs.includes(p.me);
   const n = members.length;
   const th = Math.min(Math.max(threshold, 1), n);
-  const need = !addrs.length ? "Add at least one other member." : bad ? `Not a valid address: ${short(bad, 12, 6)}` : dup ? "A member is listed twice (you are added for you)." : n > MAX_MEMBERS ? `The device shows every member: at most ${MAX_MEMBERS} including you.` : hours < 1 ? "Voting lasts at least 1 hour." : "";
+  const need = !addrs.length ? "Add at least one other member." : bad ? `Not a valid address: ${short(bad, 12, 6)}` : dup ? "A member is listed twice (you are added for you)." : n > MAX_MEMBERS ? `At most ${MAX_MEMBERS} members including you.` : hours < 1 ? "Voting lasts at least 1 hour." : "";
   const can = !p.off && !need;
   return (
     <details className="msig-create">
@@ -247,7 +250,7 @@ function Create(p: { me: string; off: boolean; why: string; info: NetworkInfo; r
           <label>Voting time (hours)<input type="number" min={1} max={720} value={hours} onChange={(e) => setHours(Number(e.target.value))} /></label>
         </div>
         <div className="row">
-          <button className="primary" type="submit" disabled={!can}>Create on the device</button>
+          <button className="primary" type="submit" disabled={!can}>Create with the device</button>
           <span className={`small ${can ? "muted" : "warn-text"}`}>{can ? `You and ${n - 1} other${n - 1 === 1 ? "" : "s"}; every member has one vote.` : p.why || need}</span>
         </div>
       </form>
