@@ -13,7 +13,7 @@ repository under the direction of the author, Sagar Rana.
 
 ## What the author did
 
-- Chose the product: a QoreChain hardware wallet on the Baochip with one button (tap = reject, hold = approve), a
+- Chose the product: a QoreChain hardware wallet on the Baochip with two buttons (left = reject, right = approve), a
   companion app with a mainnet / testnet / local devnet switch, and an emulator path for people without hardware.
 - Set the constraints: use QoreChain's own signature scheme, a local devnet for testing, and the same setup as Quazar.
 - Reviewed the results, made the project and naming decisions, and decided what to commit and publish.
@@ -22,7 +22,7 @@ repository under the direction of the author, Sagar Rana.
 
 - The Rust signer is tested byte for byte against `@qorechain/qoresign` vectors (`make test`).
 - `make test-emu` runs the firmware in the emulator and has a real local QoreChain node verify the device's
-  signatures (29 checks).
+  signatures (28 checks).
 - The device decodes every transaction itself and signs only what it shows; there is no API that signs a bare digest.
 
 ## Known limits

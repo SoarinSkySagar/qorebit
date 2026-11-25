@@ -37,8 +37,7 @@ mod code {
 
 /// Display pins (BIO numbers): SCK PC0, MOSI PC1, DC PC2, CS PC3.
 pub const DISPLAY_PINS: [u8; 4] = [16, 17, 18, 19];
-/// Button pins (BIO numbers): PB1 = 1 is the wallet's one button; PB2 = 2 is sampled by the engine
-/// but not wired (BIO n is pad PBn for n < 16, PC(n-16) above: baochip/dabao docs/pinout/pins.csv).
+/// Button pins (BIO numbers): left PB1 = 1 (0 / Reject), right PB2 = 2 (1 / Approve) (BIO n is pad PBn for n < 16, PC(n-16) above: baochip/dabao docs/pinout/pins.csv).
 pub const BUTTON_PINS: [u8; 2] = [1, 2];
 
 fn mask(pins: &[u8]) -> u32 {

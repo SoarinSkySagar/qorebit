@@ -139,12 +139,12 @@ export function App() {
       const a = needAccount();
       if (!chainAcct) throw new Error("this account does not exist on chain yet: send it some QOR first");
       await ensureChain();
-      setWait({ what: "Prove your post-quantum key", hint: "Check the device: hold to approve, then your PIN." });
+      setWait({ what: "Prove your post-quantum key", hint: "Check the device: press the right button to approve, then your PIN." });
       const [proof, pk] = await Promise.all([device.registerProof(index, info.chainId), device.pqPublicKey(index)]);
       const classical = fromHex(a.publicKey);
       const msg = registerPqKeyMsg(a.bech32, fromHex(pk.publicKey), classical, fromHex(proof.proof));
       const { body, authInfo } = buildTx({ messages: [msg], publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS });
-      setWait({ what: "Register the key", hint: "The device shows the registration. Hold to approve, then your PIN." });
+      setWait({ what: "Register the key", hint: "The device shows the registration. Press the right button to approve, then your PIN." });
       const signed = await device.signTx({
         account: index, accountNumber: chainAcct.accountNumber, chainId: info.chainId, body: toHex(body), authInfo: toHex(authInfo),
         signBytes: await signBytes(net, info.chainId), classicalOnly: true,
@@ -177,7 +177,7 @@ export function App() {
       const { gas } = await gasFor(net, probe.body, probe.authInfo);
       const { body, authInfo } = buildTx({ messages: msgs, memo, publicKey: classical, sequence: chainAcct.sequence, gas });
       if ((balance ?? 0n) < amount + fee(gas)) throw new Error(`not enough QOR: ${formatQor(amount)} plus the fee of ${formatQor(fee(gas))}`);
-      setWait({ what: `Send ${formatQor(amount)} QOR`, hint: "Check the device screen: the amount, the address and the network. Hold the button to approve, tap to reject." });
+      setWait({ what: `Send ${formatQor(amount)} QOR`, hint: "Check the device screen: the amount, the address and the network. Right button approves, left button rejects." });
       const signed = await device.signTx({
         account: index, accountNumber: chainAcct.accountNumber, chainId: info.chainId, body: toHex(body), authInfo: toHex(authInfo),
         signBytes: await signBytes(net, info.chainId),
@@ -234,13 +234,13 @@ export function App() {
       <Header net={net} networks={networks} onNet={(n) => { setNotice(null); setNet(n); }} bridge={bridge} security={security} />
       {info.real && (
         <div className="banner real" role="status">
-          <b>Mainnet.</b> Real funds. The device screen says MAINNET on every transaction: read it before you hold the button.
+          <b>Mainnet.</b> Real funds. The device screen says MAINNET on every transaction: read it before you press the right button.
         </div>
       )}
       <main>
         {bridge === false && <BridgeDown />}
         {bridge && deviceError && <DeviceDown message={deviceError} />}
-        {ready && !security.pinSet && <PinSetup onSet={() => deviceAction("Set a signing PIN", "On the device: eight presses, tap = 0, hold = 1. Then once more to confirm.", device.setPin, "Signing PIN set.")} />}
+        {ready && !security.pinSet && <PinSetup onSet={() => deviceAction("Set a signing PIN", "On the device: eight presses, left = 0, right = 1. Then once more to confirm.", device.setPin, "Signing PIN set.")} />}
         {notice && <div className={`notice ${notice.tone}`} role="status">{notice.text}</div>}
         {ready && (
           <>
@@ -314,9 +314,9 @@ function DeviceDown({ message }: { message: string }) {
 
 function ButtonLegend() {
   return (
-    <div className="legend" aria-label="The device's one button">
-      <div><b>TAP</b><span>= 0 · reject</span></div>
-      <div><b>HOLD</b><span>= 1 · approve</span></div>
+    <div className="legend" aria-label="The device's two buttons">
+      <div><b>LEFT</b><span>= 0 · reject</span></div>
+      <div><b>RIGHT</b><span>= 1 · approve</span></div>
     </div>
   );
 }
@@ -325,7 +325,7 @@ function PinSetup({ onSet }: { onSet: () => void }) {
   return (
     <section className="card accent">
       <h2>Set your signing PIN</h2>
-      <p>The device asks for it after every approval. It is eight presses of the one button: a tap is 0, a hold is 1. Five wrong tries lock signing until you enter your 24 recovery words on the device.</p>
+      <p>The device asks for it after every approval. It is eight presses of the two buttons: left is 0, right is 1. Five wrong tries lock signing until you enter your 24 recovery words on the device.</p>
       <ButtonLegend />
       <button className="primary" onClick={onSet}>Set the PIN on the device</button>
     </section>
@@ -461,7 +461,7 @@ function DeviceCard(p: { security: Security; busy: boolean; act: (what: string, 
         {s.passphrase && (<><dt>Wallet</dt><dd>passphrase wallet in use</dd></>)}
       </dl>
       <div className="actions">
-        <button className="ghost" disabled={p.busy} onClick={() => p.act(s.pinSet ? "Change the PIN" : "Set a PIN", "On the device: tap = 0, hold = 1.", device.setPin, "PIN set.")}>{s.pinSet ? "Change PIN" : "Set PIN"}</button>
+        <button className="ghost" disabled={p.busy} onClick={() => p.act(s.pinSet ? "Change the PIN" : "Set a PIN", "On the device: left = 0, right = 1.", device.setPin, "PIN set.")}>{s.pinSet ? "Change PIN" : "Set PIN"}</button>
         <button className="ghost" disabled={p.busy} onClick={() => p.act("Show the recovery words", "On the device: your PIN, then the 24 words. Nobody should see them.", device.showPhrase, "Recovery words shown on the device.")}>Show recovery words</button>
         <button className="ghost" disabled={p.busy} onClick={() => p.act("Forgot the PIN", "On the device: enter your 24 words (about 12 presses a word), then a new PIN.", device.resetPin, "PIN reset.")}>Forgot PIN</button>
         <button className="ghost" disabled={p.busy} onClick={() => p.act("Passphrase", "On the device: a passphrase opens a separate wallet until restart.", device.passphrase, "Passphrase set on the device.")}>Passphrase</button>

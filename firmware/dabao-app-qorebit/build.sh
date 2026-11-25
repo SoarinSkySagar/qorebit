@@ -11,7 +11,7 @@
 #                             approval UI and refuses to sign, unless --panel.
 #   --panel-udma              like --panel, drawing through the chip's hardware SPI (uDMA SPI2) and
 #                             polling the button from the CPU instead of using the BIO engines
-#   --panel                   the ST7789 panel + the one button on the board (src/panel.rs; untested
+#   --panel                   the ST7789 panel + the two buttons on the board (src/panel.rs; seen booting
 #                             on hardware until the panel is wired). Use with --vdisplay=false.
 set -e
 cd "$(dirname "$0")"
@@ -35,7 +35,7 @@ if [ "$vdisplay" = true ]; then
     echo "approval UI: virtual display (run tools/qorebit_display.py on the laptop)"
 elif [ "$panel" = true ]; then
     feat_default=(--no-default-features)
-    echo "approval UI: the ST7789 panel and the one button on the board"
+    echo "approval UI: the ST7789 panel and the two buttons on the board"
 else
     feat_default=(--no-default-features)
     echo "approval UI: none (signing is refused)"

@@ -1,6 +1,6 @@
 # Qorebit: notes for coding agents
 
-QoreChain hardware wallet on the Baochip-1x / Dabao board, **one button** (tap = 0 / reject, hold = 1 / approve).
+QoreChain hardware wallet on the Baochip-1x / Dabao board, **two buttons** (left PB1 = 0 / reject, right PB2 = 1 / approve).
 Derived from the Quazar wallet (`~/work/baochip/quazar`, Ethereum + leanSPHINCS): same Xous firmware setup, bridge,
 emulator and flashing; the chain, the signature scheme and the input are Qorebit's own. See `README.md` first.
 
@@ -43,13 +43,13 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 ## Firmware (`firmware/dabao-app-qorebit`)
 
 - Build: `./build.sh emu | device` (via `make`). `vdisplay` (default) shows the screen in a window; `panel` is the
-  ST7789 + button on PB1 (`panel.rs`, compile-checked only). PROG (`prog.rs`) is the same one button on the Dabao.
-- One button: `ui::HOLD_MS` = 700 ms decides tap vs hold. DISPLAY_INPUT carries `held_ms`; the chip decides.
-  `flows.rs` talks to the screen through `Io` (`ask` → `Some(true)` hold / `Some(false)` tap); unit tests script it.
+  ST7789 + buttons on PB1 / PB2 (`panel.rs`, uDMA SPI; it has booted on a board). PROG only enters the bootloader.
+- Two buttons: right = 1 / approve, left = 0 / reject, no tap or hold. DISPLAY_INPUT carries `decision u8`.
+  `flows.rs` talks to the screen through `Io` (`ask` → `Some(true)` right / `Some(false)` left); unit tests script it.
 - State: keystore slots **320..=325** and one-way counter **233** (Quazar uses 300..=305 and 232: one board can hold
   either wallet). Seed is AES-KWP wrapped by the keystore (`domain "qorebit.seed"`); the emulator uses a host file
   (`QOREBIT_STATE`, default `target/qorebit-state.bin`; `tools/make-emu-state.mjs` writes a known wallet).
-- Signing path: decode → `check` (policy) → approval screen (hold) → PIN → sign on the `crypto` thread (416 KiB stack,
+- Signing path: decode → `check` (policy) → approval screen (right button) → PIN → sign on the `crypto` thread (416 KiB stack,
   ML-DSA-87 needs ~350 KiB) → both signatures verified before release. Device refuses: >1 message, a message not
   from this account, another signer key, classical-only for anything but the registration, unknown body fields.
 - The Keccak engines (combohash, BIO) are gone: ML-DSA on the CPU is the fast path. BIO is only for the panel.

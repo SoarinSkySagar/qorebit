@@ -4,12 +4,12 @@ Qorebit on the dabao: a Xous app that signs QoreChain transactions (secp256k1 + 
 answers a host over USB HID, or over TCP in the emulator. Structure follows `ethereum-app/dabao-app-eth-burner`
 and the Quazar wallet.
 
-**One button.** A tap is 0 / reject, a hold (`ui::HOLD_MS`, 700 ms) is 1 / approve. Every screen is answered
-with it: approvals, the 8-press signing PIN, word-by-word recovery, confirmations. Sources of the button: the
-window of the bridge (dev build), the Dabao's PROG button (`prog.rs`), or PB1 on the panel build (`panel.rs`).
+**Two buttons.** The left one is 0 / reject, the right one is 1 / approve; one press is the answer. Every screen is
+answered with them: approvals, the 8-press signing PIN, word-by-word recovery, confirmations. Sources of the buttons:
+the window of the bridge (dev build), or PB1 (left) and PB2 (right) on the panel build (`panel.rs`).
 
 **Signing.** `SIGN_TX` takes the unsigned `TxBody` and `AuthInfo`; the device decodes them (`qorebit-signer`'s
-`tx::decode`), applies its policy (`tx::check`), shows them, waits for a hold, asks the PIN, then signs on a
+`tx::decode`), applies its policy (`tx::check`), shows them, waits for the right button, asks the PIN, then signs on a
 short-lived thread with a 416 KiB stack (ML-DSA-87 needs about 350 KiB) and verifies both signatures before
 releasing them. `REGISTER_PROOF` makes the proof of possession a new account's key registration carries.
 
@@ -26,4 +26,5 @@ either). The emulator keeps both in a host file (`QOREBIT_STATE`, default `targe
 `make` (see the root `Makefile`). The wire protocol is documented in `src/protocol.rs`.
 
 **Wiring for the panel build** (as in Quazar): SPI2 on PC0 (SCK), PC1 (MOSI), PC3 (CS0); DC on PC2; RES on PB4;
-backlight on PB5; the one button from PB1 to GND (the chip's pull-up).
+backlight on PB5; the buttons from PB1 (left) and PB2 (right) to GND (the chip's pull-ups). The full pin table, a diagram and the
+bring-up steps are in [`HARDWARE.md`](../../HARDWARE.md).

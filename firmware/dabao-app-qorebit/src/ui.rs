@@ -5,22 +5,20 @@
 //! [`Ui::ask`]: the request blocks until the user approves, rejects, or the timeout passes
 //! (= reject).
 //!
-//! **One button.** Everything is answered with a single button: a short press (a tap) is 0 /
-//! Reject, a long press (held for [`HOLD_MS`]) is 1 / Approve. Approving always takes a
-//! deliberate hold; a tap can only say no.
+//! **Two buttons.** The left button is 0 / Reject, the right one is 1 / Approve. There is no tap or
+//! hold: one press of a button is the answer.
 //!
 //! Backends:
 //! * `vdisplay` (cargo feature, default on for now): the **virtual display**. The rendered
 //!   framebuffer is read over USB by `tools/qorebit_display.py` (only the rows that changed,
 //!   run-length encoded), which only maps palette indices to pixels in a window and sends back
-//!   how long the button was held (`DISPLAY_POLL` / `DISPLAY_INPUT`). Development stand-in: the
-//!   laptop could fake the window or the presses. The board's PROG button works as the same
-//!   one button.
-//! * `panel` (cargo feature): the ST7789 on the board and one button on PB1 (`panel.rs`) show
-//!   the same framebuffer and press the same inputs.
+//!   which button was pressed (`DISPLAY_POLL` / `DISPLAY_INPUT`). Development stand-in: the
+//!   laptop could fake the window or the presses.
+//! * `panel` (cargo feature): the ST7789 on the board and two buttons, PB1 (left) and PB2 (right)
+//!   (`panel.rs`), show the same framebuffer and press the same inputs.
 //! * none: without a display the device refuses every signing request (never auto-approves).
 //!
-//! Input screens ([`Ui::ask_button`]) take the button as a bit: tap = 0, hold = 1 (PIN digits,
+//! Input screens ([`Ui::ask_button`]) take the two buttons as a bit: left = 0, right = 1 (PIN digits,
 //! next / back, word-by-word entry).
 
 use crate::screen::{self, Frame, Screen, Tone};
@@ -29,9 +27,6 @@ use std::time::{Duration, Instant};
 
 /// How long an approval screen waits before rejecting.
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
-/// How long the button must be held for a long press (1 / Approve). Shorter is a tap (0 / Reject).
-/// The window and the panel measure how long the button was down; this device decides.
-pub const HOLD_MS: u32 = 700;
 /// How long a result screen (SIGNED, REJECTED, ...) stays before the idle screen returns.
 pub const RESULT_TIME: Duration = Duration::from_secs(4);
 
@@ -209,12 +204,12 @@ impl Ui {
         }
     }
 
-    /// The physical button (PROG, or the panel's): held for `held_ms` on whatever screen is shown
-    /// now. A hold of [`HOLD_MS`] or more is 1 / Approve, a shorter one 0 / Reject.
-    #[cfg_attr(not(all(target_os = "xous", any(feature = "panel", feature = "board-dabao"))), allow(dead_code))]
-    pub fn press(&self, held_ms: u32) -> bool {
+    /// A physical button (the panel build): right = 1 / Approve, left = 0 / Reject, on
+    /// whatever screen is shown now.
+    #[cfg_attr(not(feature = "panel"), allow(dead_code))]
+    pub fn press(&self, right: bool) -> bool {
         let id = self.state.lock().unwrap().id;
-        self.input(id, held_ms >= HOLD_MS).is_some()
+        self.input(id, right).is_some()
     }
 
     /// The current frame and its sequence number (for the panel).

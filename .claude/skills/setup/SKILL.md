@@ -65,12 +65,13 @@ started earlier by its process group.
 0. If there is no `DISPLAY` (SSH, CI) the device window cannot open: say so; `make test-emu` still proves the signing without one.
 1. Find the Dabao: `lsusb | grep -i 1d50:61`.
    - `1d50:6196`: in its bootloader, ready to flash.
-   - `1d50:6197`: running an app. To flash it must restart in its bootloader: ask the user to **unplug it, hold
-     PROG, and plug it back in** (they can do that while the build runs).
-   - Nothing: ask the user to plug it in holding PROG. If they say there is no board, continue with the emulator (4b).
+   - `1d50:6197`: running an app. To flash it must restart in its bootloader: ask the user to **unplug it and plug
+     it back in** (boot wait is on by default, so no PROG; if it starts the app again, boot wait is off: hold PROG
+     once while plugging in). They can do that while the build runs.
+   - Nothing: ask the user to plug the board in. If they say there is no board, continue with the emulator (4b).
 2. `make flash-only` (for `panel`: `make flash-only SCREEN=panel`) in the background: builds the firmware (several minutes the first time), waits up to 3
-   minutes for the `BAOCHIP` drive, copies the images, turns boot1's "boot wait" off and starts the app
-   (`BOOTWAIT=keep` leaves it on). Then check the board shows as `1d50:6197`; if it stays in the bootloader run
+   minutes for the `BAOCHIP` drive, copies the images, turns boot1's "boot wait" on (so no PROG is ever needed to flash) and starts the app
+   (`BOOTWAIT=off` makes a normal plug-in start the app instead). Then check the board shows as `1d50:6197`; if it stays in the bootloader run
    `make boot` or ask the user to press PROG.
 3. `make board-virtual` (or `make board-panel` for `panel`) in the background: bridge + website (+ the device window for `board`). It keeps running: never wait for it to exit.
 
@@ -92,9 +93,9 @@ make security                               # the chip, the seed storage, PIN se
 ## 6. Hand over
 
 Tell the user, briefly:
-- The wallet website: http://localhost:5173. The device window is open on this computer; its **one button**: a tap
-  rejects (0), a hold of 0.7 s approves (1). Space or the mouse in the window; on the Dabao, PROG is the same button.
-- Next in the website: **Set the PIN on the device** (eight presses, tap = 0, hold = 1, then again), choose the
+- The wallet website: http://localhost:5173. The device window is open on this computer; its **two buttons**: the
+  left one rejects (0), the right one approves (1). Click them, or the Left / Right arrow keys.
+- Next in the website: **Set the PIN on the device** (eight presses, left = 0, right = 1, then again), choose the
   network (devnet / testnet / mainnet), get funds (devnet: the faucet button; testnet: QoreChain's faucet link),
   **register the post-quantum key** once, then send.
 - The devnet endpoints (REST :1317, RPC :26657, chain id `qorechain-local`).

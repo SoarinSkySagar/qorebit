@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Qorebit virtual display and bridge: the hardware-wallet screen and its one button in a window on
+"""Qorebit virtual display and bridge: the hardware-wallet screen and its two buttons in a window on
 the laptop, for firmware built with `--vdisplay` (the default until a real panel).
 
 The screen is rendered **on the chip** into a 240x240 colour framebuffer (16-colour palette,
 ST7789-class panel). The chip sends the rows that changed, run-length encoded, with the
 palette; this window only maps indices to colours. The real panel gets the same frame.
 
-**One button.** Tap it (shorter than the chip's hold time) to say 0 / Reject, hold it to say
-1 / Approve. The window times the press and sends the length; the chip decides.
-Space or the mouse on the button; Escape taps. The Dabao's PROG button is the same button.
+**Two buttons.** The left one says 0 / Reject, the right one says 1 / Approve: one click is the answer.
+Mouse on a button, or the Left / Right arrow keys (A and D work too); Escape rejects.
 
 The tool is also the bridge:
   * the device: it owns the USB HID connection (or the emulator's TCP socket);
@@ -22,7 +21,7 @@ The tool is also the bridge:
     tools/.venv/bin/python tools/qorebit_display.py --emu      # emulator on 127.0.0.1:7610
 
 DEV ONLY: the laptop draws this screen and sends the button presses, so malware on the laptop
-could fake both. The real wallet uses a display and a button on the device.
+could fake both. The real wallet uses a display and two buttons on the device.
 """
 import argparse, json, os, signal, socket, struct, subprocess, sys, threading, time
 import urllib.error, urllib.request
@@ -43,7 +42,6 @@ STATUS_TEXT = {1: "bad request", 2: "unknown command", 4: "signing failed", 5: "
 PQ_SIG_LEN, PQ_PK_LEN = 4627, 2592
 SCALE = 2                  # 240x240 panel shown at 2x
 POLL_S = 0.1
-DEFAULT_HOLD_MS = 700      # until the chip says (every snapshot carries it)
 FLAG_CLASSICAL_ONLY, FLAG_INCLUDE_PQ_KEY, FLAG_SIGN_BYTES_V1 = 1, 2, 4
 
 
@@ -176,19 +174,19 @@ def decode_rle(enc, n):
 
 
 def apply_snapshot(screen, p):
-    """seq u32, id u32, kind u8, left u8, vdisplay u8, has_frame u8, hold_ms u16, then with a
+    """seq u32, id u32, kind u8, left u8, vdisplay u8, has_frame u8, then with a
     frame: width u16, height u16, rows y0 u16, y1 u16, palette 16 x RGB, RLE indices of y0..y1"""
-    seq, sid, kind, left, vdisp, has, hold = struct.unpack(">IIBBBBH", p[:14])
-    upd = dict(seq=seq, id=sid, kind=kind, left=left, vdisplay=bool(vdisp), hold_ms=hold, connected=True)
-    if has and len(p) >= 14 + 8 + 48:
-        w, h, y0, y1 = struct.unpack(">HHHH", p[14:22])
-        palette = [tuple(p[22 + 3 * k:25 + 3 * k]) for k in range(16)]
+    seq, sid, kind, left, vdisp, has = struct.unpack(">IIBBBB", p[:12])
+    upd = dict(seq=seq, id=sid, kind=kind, left=left, vdisplay=bool(vdisp), connected=True)
+    if has and len(p) >= 12 + 8 + 48:
+        w, h, y0, y1 = struct.unpack(">HHHH", p[12:20])
+        palette = [tuple(p[20 + 3 * k:23 + 3 * k]) for k in range(16)]
         old = screen.get("frame")
         if y0 == 0 and y1 == h:
-            px = bytearray(decode_rle(p[70:], w * h))
+            px = bytearray(decode_rle(p[68:], w * h))
         elif old is not None and len(old["px"]) == w * h:
             px = bytearray(old["px"])
-            px[y0 * w:y1 * w] = decode_rle(p[70:], (y1 - y0) * w)
+            px[y0 * w:y1 * w] = decode_rle(p[68:], (y1 - y0) * w)
         else:
             px = None  # a partial update without a base frame: ask for a full one
         if px is not None:
@@ -204,7 +202,7 @@ def poll_screen(dev, screen, status):
         try:
             since = screen.get("seq") if screen.get("connected") and "frame" in screen else None
             st, p = dev.call(CMD_DISPLAY_POLL, struct.pack(">I", since) if since is not None else b"")
-            if st == 0 and len(p) >= 14:
+            if st == 0 and len(p) >= 12:
                 apply_snapshot(screen, p)
                 status.pop("error", None)
             else:
@@ -345,9 +343,23 @@ def api(dev, method, params):
     raise DeviceError(1, f"unknown method {method}")
 
 
+def _extension_origin():
+    """The wallet browser extension's origin (its id is pinned by the key in extension/manifest.json)."""
+    try:
+        with open(os.path.join(ROOT, "extension", "EXTENSION_ID")) as f:
+            return "chrome-extension://" + f.read().strip()
+    except OSError:
+        return None
+
+
+EXTENSION_ORIGIN = _extension_origin()
+
+
 def allowed_origin(origin):
     if not origin:
         return None
+    if EXTENSION_ORIGIN and origin == EXTENSION_ORIGIN:
+        return origin
     for host in ("http://localhost", "http://127.0.0.1"):
         if origin == host or origin.startswith(host + ":"):
             return origin
@@ -486,48 +498,43 @@ def run_window(dev, screen, status, title):
     cache = {"frame": None, "surf": None}
 
     ox, oy = (W - PW) // 2, 40
-    btn = pygame.Rect(ox + PW // 2 - 110, oy + PH + 28, 220, 70)
+    bw = 150
+    btn_left = pygame.Rect(ox + PW // 2 - bw - 12, oy + PH + 28, bw, 70)
+    btn_right = pygame.Rect(ox + PW // 2 + 12, oy + PH + 28, bw, 70)
     flash = {"text": "", "until": 0}
-    down = {"at": None}          # when the button went down (None: up)
+    lit = {"side": None, "until": 0}   # which button was pressed last (it lights up for a moment)
 
-    def press(held_ms):
+    def press(right):
+        """One click is the answer: the left button is 0 / Reject, the right one 1 / Approve."""
+        lit.update(side=right, until=time.time() + 0.25)
         if screen.get("kind") not in (1, 3, 4):  # approval, PIN, other input
             return
         try:
-            st, p = dev.call(CMD_DISPLAY_INPUT, struct.pack(">II", screen["id"], held_ms))
-            if st == 0 and len(p) >= 14:
+            st, p = dev.call(CMD_DISPLAY_INPUT, struct.pack(">IB", screen["id"], 1 if right else 0))
+            if st == 0 and len(p) >= 12:
                 apply_snapshot(screen, p)  # the chip's new screen, in the same round trip
             else:
                 flash.update(text=p.decode(errors="replace"), until=time.time() + 2)
         except Exception as e:
             status["error"] = f"device: {e}"
 
-    def release():
-        if down["at"] is not None:
-            held = int((time.time() - down["at"]) * 1000)
-            down["at"] = None
-            press(held)
-
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 pygame.quit()
                 return
-            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and btn.collidepoint(ev.pos):
-                down["at"] = time.time()
-            if ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
-                release()
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                if btn_left.collidepoint(ev.pos):
+                    press(False)
+                elif btn_right.collidepoint(ev.pos):
+                    press(True)
             if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_SPACE and down["at"] is None:
-                    down["at"] = time.time()
-                elif ev.key == pygame.K_ESCAPE:
-                    press(0)
-            if ev.type == pygame.KEYUP and ev.key == pygame.K_SPACE:
-                release()
+                if ev.key in (pygame.K_LEFT, pygame.K_a, pygame.K_ESCAPE):
+                    press(False)
+                elif ev.key in (pygame.K_RIGHT, pygame.K_d):
+                    press(True)
 
-        hold_ms = screen.get("hold_ms") or DEFAULT_HOLD_MS
         live = screen.get("kind") in (1, 3, 4)
-        held = int((time.time() - down["at"]) * 1000) if down["at"] is not None else 0
         # device body: a dark enclosure around the panel
         win.fill((14, 15, 18))
         body = pygame.Rect(16, 16, W - 32, H - 70)
@@ -545,21 +552,16 @@ def run_window(dev, screen, status, title):
             t = label.render("no device", True, (110, 114, 124))
             win.blit(t, t.get_rect(center=(W // 2, oy + PH // 2)))
 
-        # the one button: it fills while held, and turns green once a release would approve
-        base = (200, 204, 212) if live else (70, 74, 82)
-        long = held >= hold_ms
-        if down["at"] is not None and live:
-            base = (46, 224, 122) if long else (255, 179, 31)
-        pygame.draw.rect(win, tuple(v // 5 for v in base), btn, border_radius=34)
-        if down["at"] is not None and live:
-            fill = pygame.Rect(btn.x, btn.y, int(btn.w * min(1.0, held / hold_ms)), btn.h)
-            pygame.draw.rect(win, tuple(v // 2 for v in base), fill, border_radius=34)
-        pygame.draw.rect(win, base, btn, width=3, border_radius=34)
-        text = ("RELEASE = APPROVE" if long else "RELEASE = REJECT") if down["at"] is not None and live else "TAP  /  HOLD"
-        t = label.render(text, True, base)
-        win.blit(t, t.get_rect(center=btn.center))
-        keys = small.render(f"tap = 0 / reject      hold {hold_ms / 1000:.1f} s = 1 / approve      (Space or mouse)", True, (110, 114, 124))
-        win.blit(keys, keys.get_rect(midtop=(W // 2, btn.bottom + 8)))
+        # the two buttons: left = 0 / Reject (red), right = 1 / Approve (green)
+        for rect, right, name, color in ((btn_left, False, "LEFT  0", (255, 74, 74)), (btn_right, True, "RIGHT  1", (46, 224, 122))):
+            base = color if live else (70, 74, 82)
+            on = time.time() < lit["until"] and lit["side"] == right
+            pygame.draw.rect(win, tuple(v // (2 if on else 5) for v in base), rect, border_radius=34)
+            pygame.draw.rect(win, base, rect, width=3, border_radius=34)
+            t = label.render(name, True, base)
+            win.blit(t, t.get_rect(center=rect.center))
+        keys = small.render("left = 0 / reject      right = 1 / approve      (click, or Left / Right arrow keys)", True, (110, 114, 124))
+        win.blit(keys, keys.get_rect(midtop=(W // 2, btn_left.bottom + 8)))
         dot = (46, 224, 122) if screen.get("connected") else (255, 74, 74)
         pygame.draw.circle(win, dot, (W - 40, 30), 5)
 

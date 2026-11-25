@@ -1,6 +1,6 @@
 # Qorebit walkthrough: run it yourself
 
-Qorebit is a hardware wallet for QoreChain with **one button**. You do not need our hardware: everything runs in an
+Qorebit is a hardware wallet for QoreChain with **two buttons**. You do not need our hardware: everything runs in an
 **emulator** with the device's screen drawn in a window on your computer. If you do have a Baochip Dabao board, sections
 7 and 8 flash it. An agent can do all of this for you: run **`/setup`** in Claude Code (see section 10).
 
@@ -33,27 +33,27 @@ or two). `Ctrl+C` stops the window, emulator and website; `make devnet-down` sto
 
 No Linux x86-64 (so no local chain)? `make web-emu` starts the same without it; use the **Testnet** tab.
 
-## 4. The one button
+## 4. The two buttons
 
-The device window shows the device's screen and one button. **Tap** = 0 = reject. **Hold about 0.7 seconds** = 1 = approve
-(the button fills; it turns green once releasing will approve). Space bar or the mouse both work.
+The device window shows the device's screen and two buttons. The **left** button = 0 = reject. The **right** button = 1 = approve.
+One click is the answer. Click them, or use the Left / Right arrow keys.
 
 The same two answers are used everywhere: approving a transaction, typing the 8-press PIN, confirming, and picking words
-when restoring (tap = "earlier", hold = "this word or later").
+when restoring (left = "earlier", right = "this word or later").
 
 ## 5. First use, step by step
 
 Open <http://localhost:5173>. The header shows the network (default: Local devnet) and the device status.
 
-1. **Set the PIN.** Click *Set the PIN on the device*. On the device screen press the button 8 times (tap = 0, hold = 1),
+1. **Set the PIN.** Click *Set the PIN on the device*. On the device screen press the buttons 8 times (left = 0, right = 1),
    then the same 8 again. It is asked after every approval; 5 wrong tries lock signing.
 2. **Get funds.** Click *Get 1,000 test QOR* (the local chain's faucet). On the testnet use QoreChain's faucet link.
 3. **Register the post-quantum key.** QoreChain refuses transfers until an account's ML-DSA key is registered. Click
-   *Register the post-quantum key*; on the device **hold** to approve (twice: the proof, then the transaction), then the PIN.
+   *Register the post-quantum key*; on the device press the **right** button to approve (twice: the proof, then the transaction), then the PIN.
 4. **Send.** Paste a `qor1…` address (account 2 is a good one: pick it in the account bar, copy its address, switch back),
-   an amount, *Review on the device*. Read the screen: the amount, the address, the network. **Hold** to approve, enter
+   an amount, *Review on the device*. Read the screen: the amount, the address, the network. Press the **right** button to approve, enter
    the PIN. The website broadcasts it and shows it in *Activity*.
-5. **Try saying no.** Send again and **tap** instead: "REJECTED", nothing is signed.
+5. **Try saying no.** Send again and press the **left** button instead: "REJECTED", nothing is signed.
 
 What to look for: the device decodes the transaction itself, so what its screen shows is what it signs, whatever the
 website says. A transfer from another account, two messages in one transaction, or an unknown message type is refused or
@@ -69,6 +69,24 @@ Switch in the header. All three go through the bridge (QoreChain's public endpoi
 | Testnet | `qorechain-diana` | test QOR from QoreChain's faucet |
 | Local devnet | `qorechain-local` | `make devnet`; one-click faucet |
 
+## 6b. The browser extension (side panel)
+
+The same wallet also runs as a Chrome / Brave / Edge extension: the toolbar button opens it in the browser's side panel,
+next to whatever page you are on. It is the companion app built for the panel; it has no other powers than the website.
+
+```bash
+make extension        # builds extension/dist
+```
+
+Then open `chrome://extensions`, switch on **Developer mode**, click **Load unpacked** and choose `extension/dist`.
+Start the bridge as usual (`make demo`, `make web-emu` or `make board-virtual`), then click the Qorebit button in the
+toolbar. Chrome 114 or newer is needed (side panel).
+
+What it can do: only talk to the local bridge (`http://127.0.0.1:7630`); it asks for no other site and no page access
+(`make test` checks the manifest). The bridge accepts it by its fixed id (`extension/EXTENSION_ID`, pinned by the key in
+`extension/manifest.json`), not by a pattern, so another extension cannot use the device. Approval of every transaction
+still happens on the device.
+
 ## 7. With a Dabao board and the display on your laptop (virtual display)
 
 The board does the cryptography and keeps the keys; the screen and button are the window on your laptop (a development
@@ -79,12 +97,12 @@ make flash-virtual    # build + flash. When asked: unplug the Dabao, hold PROG, 
 make board-virtual    # the window + website (re-run this any time; no reflash needed)
 ```
 
-The board's own **PROG** button is the same one button. If `make flash-virtual` says the board is not in its bootloader,
+The board's PROG button only enters the bootloader. If `make flash-virtual` says the board is not in its bootloader,
 repeat the plug-in with PROG held. `make security` shows the chip's state; `make info` its firmware.
 
 ## 8. With a Dabao and its own display and button (no window)
 
-For a board wired with the ST7789 panel and a button on PB1 (wiring in `firmware/dabao-app-qorebit/README.md`):
+For a board wired with the ST7789 panel and a button on PB1 (pin table and bring-up steps in [`HARDWARE.md`](HARDWARE.md)):
 
 ```bash
 make flash-panel      # builds the panel firmware (screen and button stay on the device) and flashes
@@ -102,7 +120,7 @@ make screens          # every device screen as an image, in screens/
 make stack            # how much memory the post-quantum signing needs
 ```
 
-`make test-emu` prints 29 `ok` lines: key registration, transfers, tap vs hold at the 700 ms threshold, a wrong PIN,
+`make test-emu` prints 28 `ok` lines: key registration, transfers, left rejects and right approves, a wrong PIN,
 and the transactions the device must refuse.
 
 ## 10. Set it up with an agent

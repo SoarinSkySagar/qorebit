@@ -1,4 +1,4 @@
-# Qorebit: one-line commands for the QoreChain hardware wallet on the Baochip Dabao (one button).
+# Qorebit: one-line commands for the QoreChain hardware wallet on the Baochip Dabao (two buttons).
 # `make` or `make help` lists everything. Typical first run:
 #
 #   make install        tools (Rust, Node) + submodule, npm, Python venv, Xous toolchain
@@ -17,7 +17,7 @@
 # Device screen: SCREEN=virtual (default for now) approves in a window on this laptop;
 # SCREEN=panel builds for the display wired to the board and runs the bridge without a window.
 # Pass it to the commands that build firmware or start the bridge, e.g. `make flash SCREEN=panel`.
-# The one button: a tap is 0 / reject, a hold of 0.7 s is 1 / approve.
+# The two buttons: left is 0 / reject, right is 1 / approve.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -29,16 +29,20 @@ DEVNET    := $(ROOT)/devnet
 COMPANION := $(ROOT)/companion
 PY        := $(ROOT)/tools/.venv/bin/python
 
-# Flashing turns boot1's "boot wait" off so a normal plug-in starts Qorebit. BOOTWAIT=keep
-# leaves it as it is (handy for development: a board with boot wait on stops in its
-# bootloader on every plug-in, ready for the next flash), e.g. `make flash BOOTWAIT=keep`.
-BOOTWAIT ?= off
+# Boot wait: BOOTWAIT=on (default) makes the board stop in the bootloader on every plug-in, so flashing
+# needs no PROG press: unplug, plug in, `make flash`. After flashing, `make boot` starts Qorebit.
+# BOOTWAIT=off makes a normal plug-in start Qorebit (hold PROG while plugging in to reach the bootloader);
+# BOOTWAIT=keep leaves the setting alone. It is a one-way counter: each change burns one step, so it is
+# set once and left alone.
+BOOTWAIT ?= on
 ifeq ($(BOOTWAIT),keep)
   FLASH_FLAGS := --keep-bootwait
 else ifeq ($(BOOTWAIT),off)
+  FLASH_FLAGS := --bootwait-off
+else ifeq ($(BOOTWAIT),on)
   FLASH_FLAGS :=
 else
-  $(error BOOTWAIT must be `off` (default) or `keep`, not `$(BOOTWAIT)`)
+  $(error BOOTWAIT must be `on` (default), `off` or `keep`, not `$(BOOTWAIT)`)
 endif
 
 SCREEN ?= virtual
@@ -46,7 +50,7 @@ ifeq ($(SCREEN),virtual)
   VDISPLAY_FLAG := --vdisplay=true
   STACK_FLAGS   :=
 else ifeq ($(SCREEN),panel)
-  VDISPLAY_FLAG := --vdisplay=false --panel
+  VDISPLAY_FLAG := --vdisplay=false --panel-udma
   STACK_FLAGS   := --panel
 else
   $(error SCREEN must be `virtual` (laptop window) or `panel` (display on the board), not `$(SCREEN)`)
@@ -56,7 +60,7 @@ endif
 help: ## list the commands
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[1mmake %-17s\033[0m %s\n", $$1, $$2} /^## / {printf "\n\033[2m%s\033[0m\n", substr($$0, 4)}' $(MAKEFILE_LIST)
 	@printf "\n\033[2mSCREEN=virtual (default) or SCREEN=panel on firmware, flash, boot, emu, web and bridge commands.\033[0m\n"
-	@printf "\033[2mBOOTWAIT=keep on flash, flash-only and boot: leave boot1's boot wait as it is (default: turn it off).\033[0m\n"
+	@printf "\033[2mBOOTWAIT=on|off|keep on flash, flash-only and boot: boot1's boot wait (default on: no PROG press needed to flash).\033[0m\n"
 
 ## ---- install / setup ---------------------------------------------------
 
@@ -133,7 +137,7 @@ firmware-emu: ## build the emulator binary
 firmware-device: ## build the board images (loader.uf2, xous.uf2, apps.uf2)
 	$(FW)/build.sh device $(VDISPLAY_FLAG)
 
-flash: flash-only ## build, flash and start the Dabao, then open its screen (hold PROG while plugging in)
+flash: flash-only ## build, flash and start the Dabao, then open its screen (just plug the board in)
 	@$(ROOT)/tools/stack.sh $(STACK_FLAGS)
 
 flash-only: firmware-device ## build, flash and start the Dabao, without opening the screen
@@ -175,10 +179,10 @@ demo-devnet:
 demo: demo-devnet ## EMULATOR + device window + website on http://localhost:5173 (starts the local devnet too); no hardware needed
 	$(MAKE) --no-print-directory web-emu
 
-flash-virtual: ## BOARD, virtual display: build, flash and start the Dabao; the screen is a window on this laptop (hold PROG while plugging in)
+flash-virtual: ## BOARD, virtual display: build, flash and start the Dabao; the screen is a window on this laptop (just plug the board in)
 	$(MAKE) --no-print-directory flash SCREEN=virtual
 
-flash-panel: ## BOARD, own display: build for the ST7789 panel + button on PB1, flash, start; no window (hold PROG while plugging in)
+flash-panel: ## BOARD, own display: build for the ST7789 panel + buttons on PB1 / PB2, flash, start; no window (just plug the board in)
 	$(MAKE) --no-print-directory flash SCREEN=panel
 
 board-virtual: ## BOARD already flashed with the virtual display: window + website
@@ -189,7 +193,7 @@ board-panel: ## BOARD already flashed with the panel build: the bridge and websi
 
 ## ---- companion + bridge (bridge on :7620 for tools, :7630 for the browser) -----
 
-.PHONY: web web-emu wallet wallet-emu web-only bridge bridge-emu companion info security account audit harden bio-test
+.PHONY: extension web web-emu wallet wallet-emu web-only bridge bridge-emu companion info security account audit harden bio-test
 web: ## bridge + device window + wallet website on :5173, for the board (Ctrl+C stops all)
 	@$(ROOT)/tools/stack.sh --web $(STACK_FLAGS)
 
@@ -207,6 +211,9 @@ bridge: ## the bridge (+ device window) alone, for the board over USB
 
 bridge-emu: ## the bridge (+ window) alone, for an emulator started with `make emu-only`
 	$(PY) $(ROOT)/tools/qorebit_display.py --emu $(if $(filter panel,$(SCREEN)),--headless,)
+
+extension: ## build the browser extension (side panel) into extension/dist; load it unpacked in Chrome, Brave or Edge
+	$(ROOT)/extension/build.sh
 
 companion: ## typecheck and build the website
 	cd $(COMPANION) && npm run build
@@ -243,6 +250,7 @@ test-firmware: ## firmware unit tests (screens, PIN flows, storage, protocol)
 
 test-companion: ## companion: typecheck, amount parsing, registration message
 	cd $(COMPANION) && npm run typecheck && npm test
+	node $(ROOT)/tools/check-extension.mjs
 
 test-emu: ## the wallet end to end on a fresh emulator and the local devnet: the chain verifies the device's signatures (needs make devnet)
 	$(FW)/build.sh emu --vdisplay=true

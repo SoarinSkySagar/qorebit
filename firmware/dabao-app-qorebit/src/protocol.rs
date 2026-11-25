@@ -26,19 +26,19 @@
 //! | 0x0F | RESET_PIN      | -                                 | "PIN set": forgot it: this wallet's 24 words on the device, then a new PIN |
 //! | 0x12 | BIO_SELFTEST   | -                                 | UTF-8 report: the BIO display and button engines checked by two test cores (board only, not in a panel build) |
 //! | 0x30 | DISPLAY_POLL   | [since_seq u32]                   | snapshot (below); the frame only if it changed since `since_seq` |
-//! | 0x31 | DISPLAY_INPUT  | screen id u32, held_ms u32        | snapshot with the new frame (error if that screen is gone): a hold of `hold_ms` or more is 1 / Approve, shorter is 0 / Reject |
+//! | 0x31 | DISPLAY_INPUT  | screen id u32, decision u8 (1 approve, 0 reject) | snapshot with the new frame (error if that screen is gone) |
 //! | 0x20 | RESULT         | -                                 | the pending job's response, or PENDING again |
 //!
 //! SIGN_TX flags: bit 0 classical-only (only for a key registration), bit 1 carry the ML-DSA public
 //! key in the PQC extension, bit 2 v1 hybrid sign bytes (chains that have not switched to v2).
 //! The host sends the unsigned body and auth info; the device decodes them itself, shows what
-//! they do, and signs only after a hold on the approval screen and the right PIN.
+//! they do, and signs only after the right button on the approval screen and the right PIN.
 //!
-//! **Signing PIN.** Every signature asks for the 8-bit PIN on the device after Approve (tap = 0,
-//! hold = 1); NO_PIN (13) before one is set, PIN_LOCKED (14) after 5 wrong in a row.
+//! **Signing PIN.** Every signature asks for the 8-bit PIN on the device after Approve (left = 0,
+//! right = 1); NO_PIN (13) before one is set, PIN_LOCKED (14) after 5 wrong in a row.
 //!
 //! Snapshot: `seq u32, screen id u32, kind u8 (0 idle, 1 approval, 2 result, 3 PIN entry,
-//! 4 other input: tap = 0, hold = 1), seconds left u8, vdisplay u8, has_frame u8, hold_ms u16,
+//! 4 other input: left = 0, right = 1), seconds left u8, vdisplay u8, has_frame u8,
 //! [frame update]`. The frame is the device-rendered 240x240 16-colour screen (RLE rows).
 //!
 //! Long jobs: requests run on a worker thread. If the answer isn't ready within ~200 ms the
@@ -46,7 +46,7 @@
 //! RESULT until it gets the real response. A new command while a job runs is refused with BUSY
 //! (8) and the same progress payload. Jobs: 1 account key, 2 sign, 3 home screen, 6 boot,
 //! 8 waiting for approval on the device, 11 a flow on the device (PIN, words, restore, wipe,
-//! passphrase). Signing first shows an approval screen (`ui.rs`): REJECTED (9) on a tap or a
+//! passphrase). Signing first shows an approval screen (`ui.rs`): REJECTED (9) on the left button or a
 //! 60 s timeout, NO_APPROVAL_UI (10) in a build without a display.
 //!
 //! All integers big-endian.

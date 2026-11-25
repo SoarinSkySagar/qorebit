@@ -1,7 +1,7 @@
 //! Qorebit on the dabao.
 //!
 //! A hardware wallet for QoreChain on the Baochip-1x: it holds the keys, shows every transaction
-//! on its own screen, and signs only after a **hold** of its one button (a tap rejects) and the
+//! on its own screen, and signs only after the **right** button is pressed (the left one rejects) and the
 //! signing PIN. QoreChain's native lane needs a hybrid signature on every transaction, so the
 //! device makes both: ML-DSA-87 (FIPS 204) and secp256k1 (`qorebit-signer`, checked byte for byte
 //! against QoreChain's own `@qorechain/qoresign`). It answers a host over USB HID, or over TCP
@@ -14,8 +14,6 @@ mod bioproto;
 mod flows;
 #[cfg(all(target_os = "xous", feature = "panel"))]
 mod panel;
-#[cfg(all(target_os = "xous", feature = "board-dabao"))]
-mod prog;
 mod protocol;
 mod screen;
 mod security;
@@ -224,7 +222,7 @@ impl App {
         }
     }
 
-    /// Show `screen`, wait for a hold of the button (a tap or the timeout rejects), then the
+    /// Show `screen`, wait for the right button (the left one or the timeout rejects), then the
     /// signing PIN. `Ok` only when the user approved and the PIN was right.
     fn approve(&mut self, screen: screen::Approval) -> Result<(), Vec<u8>> {
         if !ui::Ui::enabled() {
@@ -665,7 +663,7 @@ impl App {
             "host file (emulator, not secret, not one-way)".into()
         };
         let text = format!(
-            "{VERSION}\nseed: {} (TRNG entropy, keystore slots {}..={})\nstate: {state}\nscheme: QoreChain hybrid: secp256k1 + ML-DSA-87 (FIPS 204), on the CPU\nbutton: one; a tap is 0 / reject, a hold of {} ms is 1 / approve\napproval: {}\nfault checks: each signature verified with its public key before release\n{}",
+            "{VERSION}\nseed: {} (TRNG entropy, keystore slots {}..={})\nstate: {state}\nscheme: QoreChain hybrid: secp256k1 + ML-DSA-87 (FIPS 204), on the CPU\nbuttons: two; left (PB1) is 0 / reject, right (PB2) is 1 / approve\napproval: {}\nfault checks: each signature verified with its public key before release\n{}",
             match self.origin {
                 storage::SeedOrigin::Created => "created on this boot",
                 storage::SeedOrigin::Loaded => "loaded from the keystore",
@@ -674,7 +672,6 @@ impl App {
             },
             storage::SEED_SLOT,
             storage::WRAP_SLOT + 1,
-            ui::HOLD_MS,
             approval_text(),
             self.security.describe(),
         );
@@ -743,7 +740,7 @@ fn job_of(cmd: u8) -> u8 {
 }
 
 /// Transport-side front end: forwards requests to the worker thread and answers progress
-/// while a job runs, so a slow job (one waiting for the user's hold) is visible and
+/// while a job runs, so a slow job (one waiting for the user's button) is visible and
 /// distinguishable from a hang.
 struct Dispatcher {
     to_worker: mpsc::Sender<Vec<u8>>,
@@ -791,12 +788,12 @@ impl transport::Handler for Dispatcher {
         }
         if body[1] == protocol::CMD_DISPLAY_INPUT {
             let p = &body[2..];
-            if p.len() != 8 || !ui::Ui::enabled() {
-                return protocol::error(Status::BadRequest, "expected screen id u32, held_ms u32");
+            if p.len() != 5 || !ui::Ui::enabled() {
+                return protocol::error(Status::BadRequest, "expected screen id u32, decision u8");
             }
             let id = u32::from_be_bytes(p[0..4].try_into().unwrap());
-            let held_ms = u32::from_be_bytes(p[4..8].try_into().unwrap());
-            return match ui::ui().input(id, held_ms >= ui::HOLD_MS) {
+            let right = p[4] != 0;
+            return match ui::ui().input(id, right) {
                 Some(snap) => protocol::response(Status::Ok, &encode_snapshot(snap)),
                 None => protocol::error(Status::BadRequest, "that screen is no longer shown"),
             };
@@ -888,11 +885,6 @@ fn main() -> ! {
             }
         })
         .expect("worker thread");
-    // PROG is the one button of the Dabao without a panel
-    #[cfg(all(target_os = "xous", feature = "board-dabao"))]
-    if ui::Ui::enabled() {
-        prog::spawn();
-    }
     // the screen and the button on the board
     #[cfg(all(target_os = "xous", feature = "panel"))]
     panel::spawn();
@@ -900,17 +892,16 @@ fn main() -> ! {
     transport::serve(Dispatcher { to_worker, from_worker, busy: true, boot_job: true, started: Instant::now() })
 }
 
-/// seq u32, screen id u32, kind u8, seconds left u8, vdisplay u8, has_frame u8, hold_ms u16, then
+/// seq u32, screen id u32, kind u8, seconds left u8, vdisplay u8, has_frame u8, then
 /// with a frame: width u16, height u16, rows y0 u16, y1 u16, palette 16 x RGB, RLE pixels of y0..y1
 fn encode_snapshot(s: ui::Snapshot) -> Vec<u8> {
-    let mut p = Vec::with_capacity(14 + s.frame.as_ref().map_or(0, Vec::len));
+    let mut p = Vec::with_capacity(12 + s.frame.as_ref().map_or(0, Vec::len));
     p.extend_from_slice(&s.seq.to_be_bytes());
     p.extend_from_slice(&s.id.to_be_bytes());
     p.push(s.kind);
     p.push(s.left);
     p.push(ui::Ui::enabled() as u8);
     p.push(s.frame.is_some() as u8);
-    p.extend_from_slice(&(ui::HOLD_MS as u16).to_be_bytes());
     if let Some(f) = s.frame {
         p.extend_from_slice(&f);
     }

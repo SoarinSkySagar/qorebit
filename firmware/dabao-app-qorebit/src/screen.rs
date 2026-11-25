@@ -218,7 +218,7 @@ pub enum Body {
     Pick { above: String, word: String, below: String },
 }
 
-/// A screen that waits for the one button: a tap (0, the left hint) or a hold (1, the right hint).
+/// A screen that waits for a button: the left one (0, the left hint) or the right one (1, the right hint).
 #[derive(Clone, Debug)]
 pub struct Input {
     pub tag: &'static str,
@@ -269,7 +269,7 @@ pub enum Screen {
 
 const M: i32 = 12; // side margin
 const NAV_H: i32 = 26;
-const ACTIONS_Y: i32 = 205; // top of the tap / hold hints
+const ACTIONS_Y: i32 = 205; // top of the left / right button hints
 const BAR_Y: i32 = 196; // countdown bar
 
 fn fill(f: &mut Frame, x: i32, y: i32, w: i32, h: i32, c: Pal) {
@@ -593,14 +593,14 @@ fn approval(f: &mut Frame, a: &Approval, left: u8, timeout: u8) {
     fill(f, M, BAR_Y, w, 4, tone);
     text_at(f, &format!("{left}s"), &FONT_6X10, tone, WIDTH as i32 - M, BAR_Y - 3, Alignment::Right);
 
-    // the one button: a tap rejects, a hold approves
+    // the left button rejects, the right one approves
     buttons(f, ("REJECT", Btn::Bad), ("APPROVE", Btn::Good));
 }
 
-/// The two answers of the one button: "TAP" (left) and "HOLD" (right), each with what it does here.
+/// The two buttons: "LEFT" and "RIGHT", each with what it does here.
 fn buttons(f: &mut Frame, left: (&str, Btn), right: (&str, Btn)) {
     let bw = (WIDTH as i32 - 2 * 8 - 8) / 2;
-    for (x, tag, (label, b)) in [(8, "TAP", left), (8 + bw + 8, "HOLD", right)] {
+    for (x, tag, (label, b)) in [(8, "LEFT", left), (8 + bw + 8, "RIGHT", right)] {
         let (fg, bg) = match b {
             Btn::Good => (GREEN, GREEN_D),
             Btn::Bad => (RED, RED_D),
@@ -655,7 +655,7 @@ fn input(f: &mut Frame, i: &Input) {
                     fill(f, x + bw / 2 - 3, by + 12, 6, 6, INK);
                 }
             }
-            text_at(f, "tap = 0    hold = 1", &FONT_6X10, MUTED, WIDTH as i32 / 2, by + 44, Alignment::Center);
+            text_at(f, "left = 0    right = 1", &FONT_6X10, MUTED, WIDTH as i32 / 2, by + 44, Alignment::Center);
             if let Some((tone, t)) = note {
                 for (k, l) in wrap(t, 30).iter().take(2).enumerate() {
                     text_at(f, l, &FONT_7X13, tone_color(*tone), WIDTH as i32 / 2, by + 66 + k as i32 * 15, Alignment::Center);
@@ -892,7 +892,7 @@ mod tests {
                     body: Body::Pick {
                         above: "between abandon and zoo".into(),
                         word: "lab".into(),
-                        below: "tap: my word comes earlier. hold: it's this word or later".into(),
+                        below: "left: my word comes earlier. right: it's this word or later".into(),
                     },
                     left: ("< EARLIER".into(), Btn::Neutral),
                     right: ("LATER >".into(), Btn::Neutral),

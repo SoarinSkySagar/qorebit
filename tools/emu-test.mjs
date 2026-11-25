@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // End-to-end wallet test on the EMULATOR against a real QoreChain node (the local devnet): the
 // device firmware signs, the chain verifies. Everything goes through the bridge's HTTP API, as the
-// companion app does, while this script answers the device's screens with taps and holds of its one
-// button (DISPLAY_INPUT).
+// companion app does, while this script answers the device's screens with its two buttons (left = 0 /
+// reject, right = 1 / approve; DISPLAY_INPUT).
 //
 //   make test-emu        (starts a fresh emulator with a known wallet + headless bridge, runs this)
 //   node tools/emu-test.mjs --entropy <hex> [--bridge 7620] [--http 7630]   (an emulator you started with a state file from make-emu-state.mjs)
@@ -25,9 +25,9 @@ const rest = restOf("devnet");
 const ENTROPY = process.argv[process.argv.indexOf("--entropy") + 1]; // the wallet make-emu-state.mjs put in the emulator
 if (!/^[0-9a-f]{64}$/i.test(ENTROPY ?? "")) { console.error("usage: node tools/emu-test.mjs --entropy <64 hex digits> [--bridge 7620] [--http 7630]"); process.exit(2); }
 const MNEMONIC = entropyToMnemonic(fromHex(ENTROPY), wordlist);
-const HOLD = 700;
+const RIGHT = true, LEFT = false; // the two buttons: right = 1 / approve, left = 0 / reject
 
-// ---------------------------------------------------------------- the device's screen and its one button
+// ---------------------------------------------------------------- the device's screen and its two buttons
 
 const framed = (body) => { const h = Buffer.alloc(4); h.writeUInt32BE(body.length); return Buffer.concat([h, body]); };
 function rawFrame(cmd, payload = Buffer.alloc(0)) {
@@ -45,15 +45,15 @@ function rawFrame(cmd, payload = Buffer.alloc(0)) {
 const poll = async () => {
   const r = await rawFrame(0x30);
   const p = r.payload;
-  return { id: p.readUInt32BE(4), kind: p[8], holdMs: p.readUInt16BE(12) };
+  return { id: p.readUInt32BE(4), kind: p[8] };
 };
-const pressOn = async (id, heldMs) => {
-  const b = Buffer.alloc(8); b.writeUInt32BE(id, 0); b.writeUInt32BE(heldMs, 4);
+const pressOn = async (id, right) => {
+  const b = Buffer.alloc(5); b.writeUInt32BE(id, 0); b[4] = right ? 1 : 0;
   return rawFrame(0x31, b);
 };
 
-/** What the script does when the device asks: hold or tap on an approval, and the PIN to type. */
-const script = { approval: [], pins: [], other: HOLD, seen: [] };
+/** What the script does when the device asks: which button on an approval, and the PIN to type. */
+const script = { approval: [], pins: [], other: RIGHT, seen: [] };
 let driving = false;
 const PIN = 0b1011_0010;
 async function drive() {
@@ -65,14 +65,14 @@ async function drive() {
     if (s.id === last || s.kind === 0 || s.kind === 2) continue;
     last = s.id;
     if (s.kind === 1) {
-      const held = script.approval.length ? script.approval.shift() : HOLD;
-      script.seen.push(`approval:${held}`);
-      await pressOn(s.id, held);
+      const right = script.approval.length ? script.approval.shift() : RIGHT;
+      script.seen.push(`approval:${right ? "right" : "left"}`);
+      await pressOn(s.id, right);
     } else if (s.kind === 3) {
       if (pin === null || pinBits === 8) { pin = script.pins.length ? script.pins.shift() : PIN; pinBits = 0; }
       const bit = (pin >> (7 - pinBits)) & 1;
       pinBits++;
-      await pressOn(s.id, bit ? HOLD : 0);
+      await pressOn(s.id, !!bit);
     } else {
       await pressOn(s.id, script.other);
     }
@@ -128,7 +128,7 @@ try {
   // 1. PIN
   script.pins.push(PIN, PIN);
   await call("device.setPin");
-  check((await call("device.security")).pinSet, "the signing PIN is set (tap = 0, hold = 1, eight presses, twice)");
+  check((await call("device.security")).pinSet, "the signing PIN is set (left = 0, right = 1, eight presses, twice)");
 
   // 2. the device's accounts are the ones QoreSign derives from the same words
   for (const i of [0, 1, 2]) {
@@ -178,14 +178,12 @@ try {
   await broadcast(fromHex(signed.txBytes));
   check((await balance(rest, you)) === before + 1_500_000n, "the chain accepted the transfer and moved 1.5 QOR");
 
-  // 6. the one button: a tap rejects, a hold approves, and the threshold is where the chip says
-  script.approval.push(0);
-  await expectError("a tap on the approval screen rejects", () => sendOnce(1), /rejected/);
-  script.approval.push(HOLD - 1);
-  await expectError(`a press of ${HOLD - 1} ms is still a tap`, () => sendOnce(1), /rejected/);
-  script.approval.push(HOLD);
+  // 6. the two buttons: the left one rejects, the right one approves
+  script.approval.push(LEFT);
+  await expectError("the left button on the approval screen rejects", () => sendOnce(1), /rejected/);
+  script.approval.push(RIGHT);
   const ok = await sendOnce(1_000);
-  check(!!ok.signed.txBytes, `a press of ${HOLD} ms is a hold: it approves`);
+  check(!!ok.signed.txBytes, "the right button on the approval screen approves");
   await broadcast(fromHex(ok.signed.txBytes));
 
   // 7. the PIN
@@ -210,8 +208,8 @@ try {
   await refuse("classical-only signing of a transfer", { body: toHex(t4.bodyBytes), authInfo: toHex(t4.authInfoBytes), classicalOnly: true }, /only for a key registration/);
   await refuse("a truncated transaction", { body: toHex(t4.bodyBytes).slice(0, -4), authInfo: toHex(t4.authInfoBytes) }, /can't read|refuse|bad/i);
   const t5 = mk([{ typeUrl: "/cosmos.bank.v1beta1.MsgMultiSend", value: new Uint8Array([1, 2, 3]) }]);
-  script.approval.push(0); // an unknown message is shown as BLIND; the user can reject it
-  await expectError("an unknown message type reaches the screen (BLIND) and a tap rejects it", () => call("device.signTx", { account: 0, accountNumber: "1", chainId: CHAIN_ID, signBytes: version, body: toHex(t5.bodyBytes), authInfo: toHex(t5.authInfoBytes) }), /rejected/);
+  script.approval.push(LEFT); // an unknown message is shown as BLIND; the user can reject it
+  await expectError("an unknown message type reaches the screen (BLIND) and the left button rejects it", () => call("device.signTx", { account: 0, accountNumber: "1", chainId: CHAIN_ID, signBytes: version, body: toHex(t5.bodyBytes), authInfo: toHex(t5.authInfoBytes) }), /rejected/);
 
   // 9. other networks: the chain id is part of what is signed, and mainnet says so on the screen
   const main = buildTx({ messages: [sendMsg(me, you, 250_000_000)], publicKey: own, sequence: 5n });

@@ -1,7 +1,7 @@
-//! Device-side flows that only use the one button: a tap is 0, a hold is 1.
+//! Device-side flows that only use the two buttons: left = 0, right = 1.
 //!
 //! * **Signing PIN**: 8 binary digits, one per press (256 PINs):
-//!   tap = 0, hold = 1. Set from the companion's
+//!   left = 0, right = 1. Set from the companion's
 //!   first-time setup, asked after you approve each signature. 5 wrong in a row lock signing
 //!   until the PIN is reset with the 24 recovery words (`storage.rs`: the attempts live on a
 //!   one-way counter, so a power cut doesn't reset them). Change it with the old PIN.
@@ -9,8 +9,8 @@
 //!   wallet's, a new PIN.
 //! * **Recovery words**: the 24 BIP-39 words, 6 per page, after the PIN.
 //! * **Restore**: each word by binary search over the 2,048-word list: the device shows a word
-//!   from the middle of what's left, you answer "my word comes earlier" (tap) or "this word or
-//!   later" (hold); 11 answers find any word. Then the BIP-39 checksum is checked.
+//!   from the middle of what's left, you answer "my word comes earlier" (left) or "this word or
+//!   later" (right); 11 answers find any word. Then the BIP-39 checksum is checked.
 //! * **Passphrase**: the same search over the printable ASCII characters (7 answers each).
 //! * **Wipe**: two confirmations, then a new seed (the companion then asks for a new PIN).
 //!
@@ -27,7 +27,7 @@ pub const WORDS: usize = 24;
 pub const MAX_PASSPHRASE: usize = 32;
 
 pub trait Io {
-    /// Show `screen`; `Some(true)` = hold, `Some(false)` = tap, `None` = timed out.
+    /// Show `screen`; `Some(true)` = right, `Some(false)` = left, `None` = timed out.
     fn ask(&mut self, screen: Screen, timeout: Option<Duration>) -> Option<bool>;
     fn result(&mut self, tone: Tone, word: &'static str, lines: Vec<String>);
 }
@@ -62,7 +62,7 @@ fn text(lines: &[(Option<Tone>, &str)]) -> Body {
     Body::Text(lines.iter().map(|(t, s)| (*t, s.to_string())).collect())
 }
 
-/// A yes / no question: true only for a hold.
+/// A yes / no question: true only for the right button.
 fn confirm(io: &mut dyn Io, tag: &'static str, heading: &str, lines: &[(Option<Tone>, &str)], no: (&str, Btn), yes: (&str, Btn)) -> bool {
     io.ask(input(tag, heading, text(lines), no, yes), Some(STEP_TIMEOUT)) == Some(true)
 }
@@ -88,7 +88,7 @@ pub fn enter_pin(io: &mut dyn Io, heading: &str, note: Option<(Tone, String)>, t
 
 /// Choose a signing PIN (entered twice). `None` if a press timed out.
 pub fn choose_pin(io: &mut dyn Io, heading: &str) -> Option<u8> {
-    let mut note = Some((Tone::Warn, "8 presses: tap is 0, hold is 1. Asked for every signature.".to_string()));
+    let mut note = Some((Tone::Warn, "8 presses: left is 0, right is 1. Asked for every signature.".to_string()));
     loop {
         let a = enter_pin(io, heading, note.take(), Some(STEP_TIMEOUT))?;
         let b = enter_pin(io, "Enter the same PIN again", None, Some(STEP_TIMEOUT))?;
@@ -186,7 +186,7 @@ fn pick_word(io: &mut dyn Io, tag: &'static str, n: usize) -> Option<usize> {
             Body::Pick {
                 above: format!("between {} and {}", list[lo], list[hi - 1]),
                 word: list[mid].to_string(),
-                below: "tap: my word comes earlier. hold: it's this word or later".into(),
+                below: "left: my word comes earlier. right: it's this word or later".into(),
             },
             ("< EARLIER", Btn::Neutral),
             ("LATER >", Btn::Neutral),
@@ -336,7 +336,7 @@ pub fn passphrase(io: &mut dyn Io) -> Option<String> {
                     Body::Pick {
                         above: format!("between {} and {}", charset_label(lo), charset_label(hi - 1)),
                         word: charset_label(mid),
-                        below: "tap: earlier. hold: this one or later. Order: space ! ... 0-9 ... A-Z ... a-z ... ~".into(),
+                        below: "left: earlier. right: this one or later. Order: space ! ... 0-9 ... A-Z ... a-z ... ~".into(),
                     },
                     ("< EARLIER", Btn::Neutral),
                     ("LATER >", Btn::Neutral),

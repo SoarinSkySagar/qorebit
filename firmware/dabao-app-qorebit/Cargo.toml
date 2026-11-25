@@ -3,7 +3,7 @@ name = "dabao-app-qorebit"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Qorebit: QoreChain hybrid (secp256k1 + ML-DSA-87) hardware wallet app for the dabao (Xous, USB HID, one button)"
+description = "Qorebit: QoreChain hybrid (secp256k1 + ML-DSA-87) hardware wallet app for the dabao (Xous, USB HID, two buttons)"
 
 # Built on its own, then handed to xous-core's xtask as a binary (like dabao-app-eth-burner).
 [workspace]
@@ -40,7 +40,7 @@ bao1x-hal = { path = "../../xous-core/libs/bao1x-hal", optional = true, features
 # OLED + buttons). On by default for now; build with `./build.sh ... --vdisplay=false` to drop it.
 default = ["vdisplay"]
 vdisplay = []
-# The ST7789 panel and the one button on the board (`src/panel.rs`): the screen and the presses
+# The ST7789 panel and the two buttons on the board (`src/panel.rs`): the screen and the presses
 # stay on the device. Build with `./build.sh device --vdisplay=false --panel`.
 panel = []
 # With `panel`: draw through the chip's hardware SPI (uDMA SPI2, `Panel`) instead of the BIO display

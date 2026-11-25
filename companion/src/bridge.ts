@@ -5,7 +5,7 @@ export class DeviceError extends Error {
   constructor(message: string, readonly code: number) {
     super(message);
   }
-  /** The user said no on the device (a tap, or the 60 s timeout). */
+  /** The user said no on the device (the left button, or the 60 s timeout). */
   get rejected() {
     return this.code === 9;
   }

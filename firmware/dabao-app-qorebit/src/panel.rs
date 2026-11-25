@@ -1,24 +1,23 @@
 //! The real screen and buttons on the board (cargo feature `panel`): a 240x240 ST7789 IPS
-//! panel on SPI and one push button.
+//! panel on SPI and two push buttons.
 //!
 //! **Untested on hardware**: written against the ST7789 datasheet and xous-core's SH1107 driver
 //! (`bao1x-hal/src/sh1107.rs`, same SPI master and pins as the Baosec display); check it once
 //! the panel is wired. Until then the default build keeps the virtual display.
 //!
 //! Wiring (firmware README): SPI2 on PC0 (SCK), PC1 (MOSI), PC3 (CS0); DC on PC2; RES on PB4;
-//! backlight on PB5; the one button from PB1 to GND, with the chip's pull-up. A tap (shorter
-//! than `ui::HOLD_MS`) is 0 / Reject, a hold is 1 / Approve. (PB2 is left unused; the BIO
-//! button engine still samples it, and anything it reports there is ignored.)
+//! backlight on PB5; buttons from PB1 (left, 0 / Reject) and PB2 (right, 1 / Approve) to GND,
+//! with the chip's pull-ups.
 //!
 //! The UI renders the same 16-colour framebuffer as for the virtual display (`screen.rs`); this
 //! thread sends the rows that changed and turns button presses into the same inputs as the
-//! window's button (`Ui::press`, with how long the button was held).
+//! window's buttons (`Ui::press`).
 //!
 //! **Custom I/O on the BIO cores (first choice).** One BIO core is the display engine: the CPU
 //! sends it 4-bit colour runs (`bioproto.rs`) and the core expands them to RGB565 and clocks
 //! the SPI itself, DC and chip select included. Another BIO core is the button engine: it
-//! samples the buttons every millisecond, debounces them and reports each press with how
-//! long it was held, which is all a tap-or-hold button needs. The CPU never touches a pixel bit or polls a button, so the screen and
+//! samples both buttons every millisecond, debounces them and reports each press with how
+//! long it was held. The CPU never touches a pixel bit or polls a button, so the screen and
 //! the buttons keep working while it signs. If the BIO can't be claimed, the uDMA SPI master
 //! and CPU polling below take over.
 
@@ -39,8 +38,8 @@ const CS: u8 = 3;
 const CTRL_PORT: IoxPort = IoxPort::PB;
 const RES: u8 = 4;
 const BLK: u8 = 5;
-/// The one button (PB1).
-const BTN: u8 = 1;
+const BTN_LEFT: u8 = 1;
+const BTN_RIGHT: u8 = 2;
 /// SPI clock of the uDMA path: 4 MHz for bring-up over breadboard jumpers (16 MHz on short wires).
 const SPI_HZ: u32 = 4_000_000;
 /// Skip the BIO engines: draw through the uDMA SPI and poll the buttons (`panel-udma` feature).
@@ -71,7 +70,9 @@ impl Panel {
         out(SPI_PORT, DC, IoxFunction::Gpio);
         out(CTRL_PORT, RES, IoxFunction::Gpio);
         out(CTRL_PORT, BLK, IoxFunction::Gpio);
-        iox.setup_pin(CTRL_PORT, BTN, Some(IoxDir::Input), Some(IoxFunction::Gpio), Some(IoxEnable::Enable), Some(IoxEnable::Enable), None, None);
+        for pin in [BTN_LEFT, BTN_RIGHT] {
+            iox.setup_pin(CTRL_PORT, pin, Some(IoxDir::Input), Some(IoxFunction::Gpio), Some(IoxEnable::Enable), Some(IoxEnable::Enable), None, None);
+        }
         // ungate the SPI master's clock (bao1x HAL server)
         let xns = xous_names::XousNames::new().ok()?;
         let hal = xns.request_connection_blocking(SERVER_NAME_BAO1X_HAL).ok()?;
@@ -347,12 +348,8 @@ fn run_bio(mut panel: BioPanel) -> ! {
             set_status(format!("BIO: running, {frames} frames drawn, {} syncs missed", panel.missed));
         }
         for p in panel.presses() {
-            // PB1 (the engine's "left") is the button; PB2 is not wired
-            if p.right {
-                continue;
-            }
-            set_status(format!("BIO: running, {frames} frames drawn, last press {} ms", p.held_ms));
-            ui::ui().press(p.held_ms);
+            set_status(format!("BIO: running, {frames} frames drawn, last press {}", if p.right { "right" } else { "left" }));
+            ui::ui().press(p.right);
         }
         std::thread::sleep(POLL);
     }
@@ -380,14 +377,14 @@ pub fn spawn() {
             set_status(format!("{bio_err}; uDMA: colour test"));
             colour_test(|rgb| panel.fill(rgb));
             set_status(format!("{bio_err}; uDMA: running"));
-            log::info!("panel: ST7789 240x{} on SPI2, the button on PB{BTN}", bioproto::PANEL_ROWS);
+            log::info!("panel: ST7789 240x{} on SPI2, buttons on PB{BTN_LEFT} / PB{BTN_RIGHT}", bioproto::PANEL_ROWS);
             let mut shown: Option<(u32, Frame)> = None;
-            // a press counts only after the button was seen released (held at boot: ignored)
-            let mut held = 0u32;
-            let mut released = false;
-            // what `info` shows: the pin's level right now and the presses counted (wiring check)
-            let mut presses = 0u32;
-            let mut shown_status = (false, 0u32);
+            // a press counts only after its button was seen released (held at boot: ignored)
+            let mut held = [0u32; 2];
+            let mut released = [false; 2];
+            // what `info` shows: each pin's level right now and the presses counted (wiring check)
+            let mut presses = [0u32; 2];
+            let mut shown_status = ([false; 2], [0u32; 2]);
             loop {
                 let (seq, frame) = ui::ui().frame();
                 if shown.as_ref().map(|(s, _)| *s) != Some(seq) {
@@ -400,22 +397,28 @@ pub fn spawn() {
                     }
                     shown = Some((seq, frame));
                 }
-                let low = panel.pressed(BTN);
-                if low {
-                    held += 1;
-                } else {
-                    // the press ends when the button is let go: its length is the answer
-                    if held >= PRESS_READS && released {
-                        presses += 1;
-                        ui::ui().press(held * POLL.as_millis() as u32);
+                let mut low = [false; 2];
+                for (k, pin) in [BTN_LEFT, BTN_RIGHT].into_iter().enumerate() {
+                    low[k] = panel.pressed(pin);
+                    if low[k] {
+                        held[k] += 1;
+                        if released[k] && held[k] == PRESS_READS {
+                            released[k] = false;
+                            presses[k] += 1;
+                            ui::ui().press(k == 1);
+                        }
+                    } else {
+                        held[k] = 0;
+                        released[k] = true;
                     }
-                    held = 0;
-                    released = true;
                 }
                 if (low, presses) != shown_status {
                     shown_status = (low, presses);
                     let lvl = |l: bool| if l { "LOW (pressed)" } else { "high" };
-                    set_status(format!("{bio_err}; uDMA: running, button PB{BTN} {} / {} presses", lvl(low), presses));
+                    set_status(format!(
+                        "{bio_err}; uDMA: running, left PB{BTN_LEFT} {} / {} presses, right PB{BTN_RIGHT} {} / {} presses",
+                        lvl(low[0]), presses[0], lvl(low[1]), presses[1]
+                    ));
                 }
                 std::thread::sleep(POLL);
             }
