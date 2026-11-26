@@ -15,7 +15,7 @@ const chrome = {
   storage: { local: { get: async (k) => ({ [k]: store[k] }), set: async (o) => Object.assign(store, o) } },
   windows: { create: async (o) => { opened.push(o.url); return { id: opened.length }; }, remove: async () => {}, onRemoved: { addListener: (f) => listeners.removed.push(f) } },
 };
-vm.runInNewContext(readFileSync("extension/background.js", "utf8"), { chrome, crypto: globalThis.crypto, URL, console, Date, Promise });
+vm.runInNewContext(readFileSync("extension/background.js", "utf8"), { chrome, crypto: globalThis.crypto, URL, console, Date, Promise, setInterval, clearInterval });
 const call = (msg, sender) => new Promise((res) => listeners.msg(msg, sender, res));
 const site = { tab: { id: 1 }, origin: "https://app.example.com", url: "https://app.example.com/x" };
 const ext = { url: "chrome-extension://abc/index.html#/approve/x" };

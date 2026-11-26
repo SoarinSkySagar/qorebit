@@ -384,22 +384,31 @@ def _ipv4_first(host, port, family=0, *args, **kwargs):
 socket.getaddrinfo = _ipv4_first
 
 
-def _extension_origin():
-    """The wallet browser extension's origin (its id is pinned by the key in extension/manifest.json)."""
+def _extension_origins():
+    """The wallet browser extension's origins, as exact strings (no patterns): the ids in extension/EXTENSION_ID (the first is the
+    development key pinned in extension/manifest.json; add the Chrome Web Store id as another line) and anything in
+    QOREBIT_EXTENSION_ORIGINS (comma separated). Firefox gives each install a random moz-extension://<uuid> origin:
+    the wallet shows it when the bridge refuses it, and you pass it here."""
+    out = set()
     try:
         with open(os.path.join(ROOT, "extension", "EXTENSION_ID")) as f:
-            return "chrome-extension://" + f.read().strip()
+            out |= {"chrome-extension://" + i for i in f.read().split()}
     except OSError:
-        return None
+        pass
+    for o in os.environ.get("QOREBIT_EXTENSION_ORIGINS", "").split(","):
+        o = o.strip()
+        if o.startswith(("chrome-extension://", "moz-extension://")) and "/" not in o.split("://", 1)[1]:
+            out.add(o)
+    return out
 
 
-EXTENSION_ORIGIN = _extension_origin()
+EXTENSION_ORIGINS = _extension_origins()
 
 
 def allowed_origin(origin):
     if not origin:
         return None
-    if EXTENSION_ORIGIN and origin == EXTENSION_ORIGIN:
+    if origin in EXTENSION_ORIGINS:
         return origin
     for host in ("http://localhost", "http://127.0.0.1"):
         if origin == host or origin.startswith(host + ":"):

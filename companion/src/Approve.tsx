@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fromHex, parseSiwqMessage, verifySiwq, type SiwqFields, type SiwqSignature } from "@qorechain/qoresign";
 import { bridgeUp, device, DeviceError } from "./bridge";
+import { ext } from "./ext";
 
 /** What a website asked for (the extension's background keeps it until this page answers). */
 interface Pending {
@@ -18,7 +19,7 @@ interface State {
 const MAX_STATEMENT = 75;
 const MAX_DOMAIN = 44;
 const b64 = (bytes: Uint8Array) => btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
-const chrome_ = (globalThis as any).chrome;
+const chrome_ = ext;
 const send = (m: Record<string, unknown>) => chrome_.runtime.sendMessage(m);
 
 /** The approval window a site's request opens (`index.html#/approve/<id>`): connect, or sign in with the device. */

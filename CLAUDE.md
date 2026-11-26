@@ -118,6 +118,12 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   `chrome.storage.session`, so it lasts until the browser closes; wrong-try throttle), `LockScreen.tsx` (`LockGate` wraps the wallet and the
   approval window in `main.tsx`; autofocus + Enter; `PasswordCard` in Device). It gates the pages, not the keys. No reset in the UI on purpose.
 
+- Firefox: `extension/manifest.firefox.json` (MV3, `background.scripts`, `sidebar_action`, gecko id, `data_collection_permissions: none`, host permissions for the
+  pages the content scripts run on); `make extension-firefox` -> `extension/dist-firefox`; scripts use `browser ?? chrome` (`companion/src/ext.ts`).
+  Its origin is a random `moz-extension://uuid`: the bridge takes exact origins from `extension/EXTENSION_ID` (one id per line, add the Chrome Web Store
+  id) and `QOREBIT_EXTENSION_ORIGINS`; the app shows the command when the bridge answers 403. `make extension-zip` -> store zips (`STORE.md`). `web-ext lint`
+  passes (0 errors; 2 innerHTML warnings are React's). Not run in a real Firefox yet.
+
 ## Rules
 
 - Approval of a transaction happens on the device, never only in the companion. Never add an API that signs a bare

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fromHex, toHex } from "@qorechain/qoresign";
-import { bridgeUp, device, DeviceError, fundDevnet, loadNetworks, type DeviceAccount, type Security } from "./bridge";
+import { bridgeStatus, device, DeviceError, fundDevnet, loadNetworks, type DeviceAccount, type Security } from "./bridge";
 import {
   broadcast, gasFor, getAccount, getBalance, history, nodeChainId, pqStatus, signBytes, waitForTx,
   type Activity, type ChainAccount,
@@ -11,6 +11,7 @@ import { SignInCard } from "./SignIn";
 import { CrossVmCard } from "./CrossVm";
 import { SmartAccountCard } from "./SmartAccount";
 import { qorToEvmHex } from "./crossVmMsg";
+import { ext } from "./ext";
 import { PasswordCard } from "./LockScreen";
 import { lockAvailable, lockNow } from "./lock";
 import { ACCOUNTS, AccountMenu, Icon, NetworkMenu, ScreenHead, TabBar, Tile, accountName, type View } from "./Shell";
@@ -47,6 +48,7 @@ export function App() {
   const [view, setView] = useState<View>("home");
   const setIndex = (i: number) => { setIndexState(i); setNotice(null); try { localStorage.setItem("qorebit.index", String(i)); } catch { /* private mode */ } };
   const [bridge, setBridge] = useState<boolean | null>(null);
+  const [originBlocked, setOriginBlocked] = useState(false);
   const [security, setSecurity] = useState<Security | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [lastTx, setLastTx] = useState<{ hash: string; at: number } | null>(null);
@@ -81,7 +83,9 @@ export function App() {
 
   // the bridge and the device
   const loadDevice = useCallback(async () => {
-    const up = await bridgeUp();
+    const status = await bridgeStatus();
+    const up = status === "up";
+    setOriginBlocked(status === "origin");
     setBridge(up);
     if (!up) return;
     try {
@@ -324,7 +328,7 @@ export function App() {
   useEffect(() => {
     if (!acct || acctFor !== index) return;
     try {
-      (globalThis as any).chrome?.storage?.local?.set({ "qorebit.state": { address: acct.bech32, index, accountName: accountName(index), net, chainId: info.chainId } });
+      ext?.storage?.local?.set({ "qorebit.state": { address: acct.bech32, index, accountName: accountName(index), net, chainId: info.chainId } });
     } catch { /* not in the extension */ }
   }, [acct, acctFor, index, net, info.chainId]);
 
@@ -347,7 +351,7 @@ export function App() {
             <b>Mainnet.</b> Real funds. The device screen says MAINNET on every transaction: read it before you press the right button.
           </div>
         )}
-        {bridge === false && <BridgeDown />}
+        {bridge === false && (originBlocked ? <OriginBlocked /> : <BridgeDown />)}
         {bridge && deviceError && <DeviceDown message={deviceError} />}
         {bridge && deviceBusy && !deviceError && !security && (
           <section className="card center">
@@ -451,6 +455,20 @@ export function App() {
       {ready && <TabBar view={view} onView={go} />}
       {wait && <WaitOverlay wait={wait} />}
     </div>
+  );
+}
+
+/** The bridge runs but refuses this extension: Firefox gives every install its own address, which the bridge has to be told. */
+function OriginBlocked() {
+  const origin = location.origin;
+  return (
+    <section className="card center">
+      <h2>The bridge does not know this wallet yet</h2>
+      <p className="muted">For safety the bridge only talks to the extensions it was told about. Start it with this wallet's address:</p>
+      <pre className="code">{`QOREBIT_EXTENSION_ORIGINS=${origin} make board-panel`}</pre>
+      <p className="muted small">(or with <span className="mono">make web-emu</span> and the same prefix). Firefox gives each install its own address, so this is needed once per install.</p>
+      <Copy text={`QOREBIT_EXTENSION_ORIGINS=${origin}`} label="Copy" />
+    </section>
   );
 }
 

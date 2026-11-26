@@ -1,22 +1,31 @@
 // Qorebit wallet background: opens the side panel from the toolbar button, and answers websites that use window.qorechain.
 // A site's request is shown to the user in a small approval window (the wallet's own page); nothing is signed or shared
 // without it, and a signature is made on the device after its button is pressed.
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+// Chrome, Brave and Edge have the `chrome` API and a side panel; Firefox has `browser` and a sidebar.
+const api = globalThis.browser ?? globalThis.chrome;
+api.runtime.onInstalled.addListener(() => {
+  api.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 });
+// Firefox: the toolbar button opens and closes the sidebar (it needs a user click, which this is)
+if (api.sidebarAction && api.action?.onClicked) api.action.onClicked.addListener(() => api.sidebarAction.toggle());
 
 const STATE = "qorebit.state"; // written by the wallet page: { address, index, accountName, net, chainId }
 const CONNECTIONS = "qorebit.connections"; // { [origin]: connectedAt }
 const requests = new Map(); // id -> { id, origin, method, params, windowId, resolve }
 let counter = 0;
+let alive = null;
+const keepAlive = () => {
+  if (requests.size && !alive) alive = setInterval(() => api.storage.local.get(STATE), 20000);
+  else if (!requests.size && alive) { clearInterval(alive); alive = null; }
+};
 
 const err = (code, message) => ({ error: { code, message } });
-const getState = async () => (await chrome.storage.local.get(STATE))[STATE] ?? null;
-const connected = async (origin) => !!((await chrome.storage.local.get(CONNECTIONS))[CONNECTIONS] ?? {})[origin];
+const getState = async () => (await api.storage.local.get(STATE))[STATE] ?? null;
+const connected = async (origin) => !!((await api.storage.local.get(CONNECTIONS))[CONNECTIONS] ?? {})[origin];
 async function connect(origin) {
-  const c = (await chrome.storage.local.get(CONNECTIONS))[CONNECTIONS] ?? {};
+  const c = (await api.storage.local.get(CONNECTIONS))[CONNECTIONS] ?? {};
   c[origin] = Date.now();
-  await chrome.storage.local.set({ [CONNECTIONS]: c });
+  await api.storage.local.set({ [CONNECTIONS]: c });
 }
 
 function ask(origin, method, params) {
@@ -26,25 +35,28 @@ function ask(origin, method, params) {
     const id = String(++counter) + "-" + crypto.randomUUID();
     const req = { id, origin, method, params, windowId: null, resolve };
     requests.set(id, req);
+    keepAlive();
     try {
-      const w = await chrome.windows.create({ url: chrome.runtime.getURL("index.html") + "#/approve/" + id, type: "popup", width: 420, height: 720, focused: true });
+      const w = await api.windows.create({ url: api.runtime.getURL("index.html") + "#/approve/" + id, type: "popup", width: 420, height: 720, focused: true });
       req.windowId = w.id;
     } catch {
       requests.delete(id);
+      keepAlive();
       resolve(err(4900, "could not open the wallet"));
     }
   });
 }
-chrome.windows.onRemoved.addListener((windowId) => {
+api.windows.onRemoved.addListener((windowId) => {
   for (const r of requests.values()) {
     if (r.windowId === windowId) {
       requests.delete(r.id);
+      keepAlive();
       r.resolve(err(4001, "the user closed the wallet without approving"));
     }
   }
 });
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     // from a website (through content.js)
     if (msg?.type === "qorebit:request" && sender.tab) {
@@ -73,28 +85,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     }
     // from the wallet's own approval page (an extension page, not a tab)
-    if (sender.url && sender.url.startsWith(chrome.runtime.getURL("")) && !sender.tab) {
+    if (sender.url && sender.url.startsWith(api.runtime.getURL("")) && !sender.tab) {
       const r = requests.get(msg?.id);
       if (msg?.type === "qorebit:get") return sendResponse(r ? { origin: r.origin, method: r.method, params: r.params } : null);
       if (msg?.type === "qorebit:done" && r) {
         requests.delete(r.id);
+        keepAlive();
         if (r.method === "qor_requestAccounts") {
           await connect(r.origin);
           r.resolve({ result: [msg.result.address] });
         } else {
           r.resolve({ result: msg.result });
         }
-        if (r.windowId) chrome.windows.remove(r.windowId).catch(() => {});
+        if (r.windowId) api.windows.remove(r.windowId).catch(() => {});
         return sendResponse(true);
       }
       if (msg?.type === "qorebit:fail" && r) {
         requests.delete(r.id);
+        keepAlive();
         r.resolve(err(msg.code ?? 4001, String(msg.message ?? "rejected")));
-        if (r.windowId) chrome.windows.remove(r.windowId).catch(() => {});
+        if (r.windowId) api.windows.remove(r.windowId).catch(() => {});
         return sendResponse(true);
       }
       if (msg?.type === "qorebit:disconnect-all") {
-        await chrome.storage.local.set({ [CONNECTIONS]: {} });
+        await api.storage.local.set({ [CONNECTIONS]: {} });
         return sendResponse(true);
       }
     }

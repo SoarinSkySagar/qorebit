@@ -26,7 +26,7 @@ make flash-virtual && make board-virtual   # a Dabao, its screen as a window on 
 make flash-panel   && make board-panel     # a Dabao with its own panel + button, no window
 ```
 
-**Step by step guide: [walkthrough.md](walkthrough.md).** In the website: **Set the PIN on the device**, choose the Pin connections for a board: [HARDWARE.md](HARDWARE.md). Browser extension (side panel): `make extension`, see the walkthrough.
+**Step by step guide: [walkthrough.md](walkthrough.md).** In the website: **Set the PIN on the device**, choose the Pin connections for a board: [HARDWARE.md](HARDWARE.md). Browser extension: `make extension` (Chrome, Brave, Edge: side panel) or `make extension-firefox` (Firefox: sidebar); see the walkthrough and `extension/STORE.md` (publishing).
 network, get funds (the devnet has a one-click faucet, the testnet a link to QoreChain's), **register the
 post-quantum key** once per account and network, then send.
 

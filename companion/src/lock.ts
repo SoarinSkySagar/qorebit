@@ -13,7 +13,7 @@ interface Store {
   set(o: Record<string, unknown>): Promise<void>;
   remove(key: string): Promise<void>;
 }
-const c = () => (globalThis as any).chrome;
+const c = () => (globalThis as any).browser ?? (globalThis as any).chrome; // Firefox or Chrome
 /** The extension's storage areas, or null on the website (no lock there). */
 function areas(): { local: Store; session: Store } | null {
   const s = c()?.storage;

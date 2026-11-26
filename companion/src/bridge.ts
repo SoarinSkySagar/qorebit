@@ -27,14 +27,16 @@ export async function rpc<T>(method: string, params: Record<string, unknown> = {
   return j.result as T;
 }
 
-export async function bridgeUp(): Promise<boolean> {
+/** "up", "down" (not running), or "origin" (running, but it does not know this page's origin: a Firefox extension, until it is told). */
+export async function bridgeStatus(): Promise<"up" | "down" | "origin"> {
   try {
     const r = await fetch(`${BRIDGE}/`);
-    return r.ok;
+    return r.ok ? "up" : r.status === 403 ? "origin" : "down";
   } catch {
-    return false;
+    return "down";
   }
 }
+export const bridgeUp = async () => (await bridgeStatus()) === "up";
 
 export async function loadNetworks(): Promise<Record<NetworkId, NetworkInfo>> {
   try {

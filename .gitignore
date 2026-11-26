@@ -63,3 +63,5 @@ companion/dist/
 
 # ---- browser extension build output
 extension/dist/
+extension/dist-firefox/
+extension/store/

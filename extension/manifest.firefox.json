@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Qorebit wallet",
+  "version": "0.2.0",
+  "description": "Qorebit wallet for the Qorebit QoreChain hardware wallet: a sidebar wallet, and Sign In With QoreChain for websites. Every approval happens on the device.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "qorebit-wallet@qorebit",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "action": {
+    "default_title": "Qorebit wallet",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png" }
+  },
+  "sidebar_action": {
+    "default_title": "Qorebit wallet",
+    "default_panel": "index.html",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png" }
+  },
+  "background": { "scripts": ["background.js"] },
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:7630/*", "http://*/*", "https://*/*"],
+  "content_scripts": [
+    { "matches": ["http://*/*", "https://*/*"], "js": ["inject.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
+    { "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_start", "all_frames": false }
+  ],
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:7630"
+  }
+}

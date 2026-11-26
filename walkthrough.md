@@ -87,6 +87,12 @@ nothing from pages. Two tiny scripts run on web pages only to offer them `window
 The bridge accepts the extension by its fixed id (`extension/EXTENSION_ID`, pinned by the key in `extension/manifest.json`), not by a
 pattern, so another extension cannot use the device. Approval of every transaction still happens on the device.
 
+**Firefox.** `make extension-firefox` builds `extension/dist-firefox`. Open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**,
+and choose `extension/dist-firefox/manifest.json` (Firefox 128 or newer; it opens as a sidebar, the toolbar button toggles it, and a temporary
+add-on is removed when Firefox closes; `STORE.md` covers a signed, permanent install). Firefox gives every install its own address, so the first
+time the wallet says "the bridge does not know this wallet yet" and shows a command: start the bridge with it,
+`QOREBIT_EXTENSION_ORIGINS=moz-extension://<id> make board-panel`.
+
 **The password lock.** The first time you open the extension it asks you to create a password (at least 8 characters, with a strength
 bar). After that it opens on the password field with the keyboard already in it: type and press Enter. Once unlocked it stays open for the
 browser session (the side panel and the approval window share it; closing the browser locks it again). The lock icon at the top locks it

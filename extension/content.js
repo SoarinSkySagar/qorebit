@@ -7,7 +7,7 @@ window.addEventListener("message", (e) => {
   const reply = (r) => window.postMessage({ target: "qorebit-page", id: d.id, ...r }, "*");
   if (!METHODS.has(d.method)) return reply({ error: { code: 4200, message: `Qorebit does not support ${String(d.method).slice(0, 40)}` } });
   if (JSON.stringify(d.params ?? []).length > 8192) return reply({ error: { code: -32602, message: "request too large" } });
-  chrome.runtime.sendMessage({ type: "qorebit:request", method: d.method, params: d.params ?? [] }).then(
+  (globalThis.browser ?? globalThis.chrome).runtime.sendMessage({ type: "qorebit:request", method: d.method, params: d.params ?? [] }).then(
     (r) => reply(r ?? { error: { code: -32603, message: "no answer from the wallet" } }),
     () => reply({ error: { code: 4900, message: "the Qorebit wallet is not available" } }),
   );

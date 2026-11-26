@@ -193,7 +193,7 @@ board-panel: ## BOARD already flashed with the panel build: the bridge and websi
 
 ## ---- companion + bridge (bridge on :7620 for tools, :7630 for the browser) -----
 
-.PHONY: extension web web-emu wallet wallet-emu web-only bridge bridge-emu companion info security account audit harden bio-test
+.PHONY: extension extension-firefox extension-zip web web-emu wallet wallet-emu web-only bridge bridge-emu companion info security account audit harden bio-test
 web: ## bridge + device window + wallet website on :5173, for the board (Ctrl+C stops all)
 	@$(ROOT)/tools/stack.sh --web $(STACK_FLAGS)
 
@@ -214,6 +214,12 @@ bridge-emu: ## the bridge (+ window) alone, for an emulator started with `make e
 
 extension: ## build the browser extension (side panel) into extension/dist; load it unpacked in Chrome, Brave or Edge
 	$(ROOT)/extension/build.sh
+
+extension-firefox: ## build the Firefox extension (sidebar) into extension/dist-firefox
+	$(ROOT)/extension/build.sh firefox
+
+extension-zip: ## both extensions and the store upload zips (extension/store/)
+	$(ROOT)/extension/build.sh zip
 
 companion: ## typecheck and build the website
 	cd $(COMPANION) && npm run build
