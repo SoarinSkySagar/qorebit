@@ -1,6 +1,6 @@
 // Qorebit wallet: relays the page's requests (window.qorechain) to the extension's background and the answer back.
 // It forwards only the method and params; the background learns the site from the browser (sender.origin), never from the page.
-const METHODS = new Set(["qor_requestAccounts", "qor_accounts", "qor_chainId", "qor_signIn"]);
+const METHODS = new Set(["qor_requestAccounts", "qor_accounts", "qor_chainId", "qor_signIn", "qor_sendTransaction"]);
 window.addEventListener("message", (e) => {
   const d = e.data;
   if (e.source !== window || !d || d.target !== "qorebit-content" || typeof d.id !== "number") return;

@@ -1,6 +1,8 @@
 /** The device, through the bridge (tools/qorebit_display.py): `POST /rpc {method, params}`. */
 import { BRIDGE, DEFAULT_NETWORKS, type NetworkId, type NetworkInfo } from "./networks";
 
+export const ORIGIN_BLOCKED = -3;
+
 export class DeviceError extends Error {
   constructor(message: string, readonly code: number) {
     super(message);
@@ -22,6 +24,8 @@ export async function rpc<T>(method: string, params: Record<string, unknown> = {
   } catch {
     throw new DeviceError("The bridge is not running (make web, or make bridge).", -2);
   }
+  // the bridge refuses an origin it was not told about with 403 (Firefox sends no Origin on a plain GET, so only the POST shows it)
+  if (r.status === 403) throw new DeviceError("The bridge does not know this wallet yet.", ORIGIN_BLOCKED);
   const j = (await r.json()) as { result?: T; error?: { code: number; message: string } };
   if (j.error) throw new DeviceError(j.error.message.replace(/^[a-z ]+: /, (m) => (m.length < 28 ? "" : m)), j.error.code);
   return j.result as T;

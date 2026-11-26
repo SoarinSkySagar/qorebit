@@ -110,7 +110,19 @@ Cross-VM calls, each its own screen) and **Device** (PIN, recovery words, passph
 const [address] = await window.qorechain.request({ method: "qor_requestAccounts" });   // asks you to connect the site
 const chainId   = await window.qorechain.request({ method: "qor_chainId" });
 const signature = await window.qorechain.request({ method: "qor_signIn", params: [{ message }] }); // SIWQ, signed on the device
+const { hash, height } = await window.qorechain.request({   // a transaction, signed on the device and sent by the wallet
+  method: "qor_sendTransaction",
+  params: [{ messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: { toAddress: "qor1…", amount: [{ denom: "uqor", amount: "100000" }] } }], memo: "order 42" }],
+});
 ```
+
+**Sending a transaction from a site.** `qor_sendTransaction` takes exactly one message (the device signs one per transaction): a send as
+`{ toAddress, amount }` (the wallet fills in your account), or any message as `{ typeUrl, value: "<base64 protobuf>" }`. The Qorebit window
+shows the site, the amount and recipient (sends and staking are decoded; other types show their type and bytes with a warning), the memo,
+the network and the fee, and checks that the account exists, its post-quantum key is registered and the balance covers it. On Approve the device
+shows the transaction itself and asks for the button and PIN; the wallet then sends it and answers the site with `{ hash, height }` once it is
+in a block, or an error (code 4001 if you reject, on the window or on the device). The site must be connected first. To try it,
+serve the demo page and open it with the extension installed: `python3 -m http.server 8080 -d extension/demo`, then http://localhost:8080.
 
 `qor_requestAccounts` opens a small Qorebit window ("Connect to this site?"). `qor_signIn` opens the same window with the site and the
 statement, then the device asks for its button and your PIN. The wallet refuses a message whose site is not the requesting site, one for

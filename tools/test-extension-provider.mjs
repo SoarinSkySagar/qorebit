@@ -18,7 +18,8 @@ const chrome = {
 vm.runInNewContext(readFileSync("extension/background.js", "utf8"), { chrome, crypto: globalThis.crypto, URL, console, Date, Promise, setInterval, clearInterval });
 const call = (msg, sender) => new Promise((res) => listeners.msg(msg, sender, res));
 const site = { tab: { id: 1 }, origin: "https://app.example.com", url: "https://app.example.com/x" };
-const ext = { url: "chrome-extension://abc/index.html#/approve/x" };
+// the approval window is a popup: the browser gives its messages a tab too
+const ext = { url: "chrome-extension://abc/index.html#/approve/x", tab: { id: 9 } };
 const request = (method, params = []) => call({ type: "qorebit:request", method, params }, site);
 
 await chrome.storage.local.set({ "qorebit.state": { address: "qor1abc", index: 0, accountName: "Account 1", net: "testnet", chainId: "qorechain-diana" } });
@@ -35,6 +36,7 @@ assert.equal(opened.length, 1);
 const id = /#\/approve\/(.+)$/.exec(opened[0])[1];
 assert.equal((await request("qor_requestAccounts")).error.code, -32002, "one waiting request per site");
 assert.equal(await call({ type: "qorebit:done", id, result: { address: "evil" } }, site), null, "a website cannot approve its own request");
+assert.equal(await call({ type: "qorebit:request", method: "qor_accounts" }, ext), null, "a wallet page is not a website");
 same(await call({ type: "qorebit:get", id }, ext), { origin: "https://app.example.com", method: "qor_requestAccounts", params: [] });
 await call({ type: "qorebit:done", id, result: { address: "qor1abc" } }, ext);
 same((await pending).result, ["qor1abc"]);
@@ -55,4 +57,18 @@ await new Promise((r) => setTimeout(r, 10));
 listeners.removed.forEach((f) => f(opened.length));
 assert.equal((await si2).error.code, 4001);
 assert.equal((await request("qor_signIn", [{ message: "x".repeat(5000) }])).error.code, -32602, "a huge message is refused");
+// send a transaction: needs a connection, exactly one message, and only {messages, memo} reach the approval window
+const tx = { messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: { toAddress: "qor1x", amount: [{ denom: "uqor", amount: "1" }] } }], memo: "m", sneaky: "x" };
+const other = { tab: { id: 2 }, origin: "https://other.example", url: "https://other.example/" };
+assert.equal((await call({ type: "qorebit:request", method: "qor_sendTransaction", params: [tx] }, other)).error.code, 4100, "an unconnected site cannot ask");
+assert.equal((await request("qor_sendTransaction", [{ messages: [] }])).error.code, -32602, "one message exactly");
+assert.equal((await request("qor_sendTransaction", [{ messages: [tx.messages[0], tx.messages[0]] }])).error.code, -32602);
+assert.equal((await request("qor_sendTransaction", [])).error.code, -32602);
+const st = request("qor_sendTransaction", [tx]);
+await new Promise((r) => setTimeout(r, 10));
+const id3 = /#\/approve\/(.+)$/.exec(opened[opened.length - 1])[1];
+const shown = await call({ type: "qorebit:get", id: id3 }, ext);
+same(Object.keys(shown.params[0]).sort(), ["memo", "messages"], "extra fields are dropped");
+await call({ type: "qorebit:done", id: id3, result: { hash: "ABC", height: "5" } }, ext);
+same((await st).result, { hash: "ABC", height: "5" });
 console.log("extension provider: ok");

@@ -4,6 +4,9 @@
 //   request({ method: "qor_accounts" })                  -> ["qor1…"] or []   (no prompt)
 //   request({ method: "qor_chainId" })                   -> "qorechain-…"
 //   request({ method: "qor_signIn", params: [{ message }] }) -> the SIWQ signature (ml-dsa-87-hybrid), signed on the device
+//   request({ method: "qor_sendTransaction", params: [{ messages: [{ typeUrl, value }], memo? }] })
+//        -> { hash, height }: one message (a send as { toAddress, amount: [{ denom, amount }] }, or any message as base64 protobuf);
+//           the wallet adds the fee, the device shows the transaction and signs it after the button and PIN, the wallet broadcasts it
 // It never sees a key: the device signs, and only after the user presses the button on it.
 (() => {
   if (window.qorechain) return;

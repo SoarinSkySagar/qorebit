@@ -193,7 +193,7 @@ board-panel: ## BOARD already flashed with the panel build: the bridge and websi
 
 ## ---- companion + bridge (bridge on :7620 for tools, :7630 for the browser) -----
 
-.PHONY: extension extension-firefox extension-zip web web-emu wallet wallet-emu web-only bridge bridge-emu companion info security account audit harden bio-test
+.PHONY: demo-site extension extension-firefox extension-zip web web-emu wallet wallet-emu web-only bridge bridge-emu companion info security account audit harden bio-test
 web: ## bridge + device window + wallet website on :5173, for the board (Ctrl+C stops all)
 	@$(ROOT)/tools/stack.sh --web $(STACK_FLAGS)
 
@@ -214,6 +214,9 @@ bridge-emu: ## the bridge (+ window) alone, for an emulator started with `make e
 
 extension: ## build the browser extension (side panel) into extension/dist; load it unpacked in Chrome, Brave or Edge
 	$(ROOT)/extension/build.sh
+
+demo-site: ## serve the demo website for the extension's window.qorechain (connect, send) at http://localhost:8080
+	python3 -m http.server 8080 --bind 127.0.0.1 -d $(ROOT)/extension/demo
 
 extension-firefox: ## build the Firefox extension (sidebar) into extension/dist-firefox
 	$(ROOT)/extension/build.sh firefox

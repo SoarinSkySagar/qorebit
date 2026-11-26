@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 import { fromHex, parseSiwqMessage, verifySiwq, type SiwqFields, type SiwqSignature } from "@qorechain/qoresign";
-import { bridgeUp, device, DeviceError } from "./bridge";
+import { bridgeUp, device, DeviceError, loadNetworks, ORIGIN_BLOCKED } from "./bridge";
+import { broadcast, gasFor, getAccount, getBalance, nodeChainId, pqStatus, signBytes, waitForTx } from "./chain";
+import { DEFAULT_NETWORKS, type NetworkId } from "./networks";
+import { describeSiteTx, type Described } from "./siteTx";
+import { buildTx, DEFAULT_GAS, fee, formatQor, type KeyType } from "./tx";
+import { toHex } from "@qorechain/qoresign";
 import { ext } from "./ext";
 
 /** What a website asked for (the extension's background keeps it until this page answers). */
 interface Pending {
   origin: string;
-  method: "qor_requestAccounts" | "qor_signIn";
-  params: { message?: string }[];
+  method: "qor_requestAccounts" | "qor_signIn" | "qor_sendTransaction";
+  params: any[];
 }
 interface State {
   address: string;
@@ -42,7 +47,7 @@ export function Approve({ id }: { id: string }) {
         const sec = await device.security();
         if (live) setReady(sec.pinSet ? null : "Set the signing PIN in the wallet first.");
       } catch (e) {
-        if (live) setReady(e instanceof DeviceError && e.code === 8 ? null : e instanceof Error ? e.message : String(e));
+        if (live) setReady(e instanceof DeviceError && e.code === 8 ? null : e instanceof DeviceError && e.code === ORIGIN_BLOCKED ? `The bridge does not know this wallet yet: start it with QOREBIT_EXTENSION_ORIGINS=${location.origin}` : e instanceof Error ? e.message : String(e));
       }
     })();
     return () => void (live = false);
@@ -79,7 +84,7 @@ export function Approve({ id }: { id: string }) {
     setBusy(true);
     setError("");
     try {
-      const message = req.params[0].message!;
+      const message = req.params[0].message as string;
       const r = await device.signSiwq(state.index, message);
       const acct = await device.account(state.index);
       const signature: SiwqSignature = {
@@ -98,6 +103,7 @@ export function Approve({ id }: { id: string }) {
     }
   }
 
+  if (req?.method === "qor_sendTransaction" && state) return <SendTx id={id} req={req} state={state} ready={ready} />;
   if (req === undefined) return <div className="approve"><p className="muted">Loading…</p></div>;
   if (req === null) return <div className="approve"><h1>Nothing to approve</h1><p className="muted">This request has ended. You can close this window.</p></div>;
 
@@ -133,6 +139,125 @@ export function Approve({ id }: { id: string }) {
         {req.method === "qor_requestAccounts"
           ? <button className="primary" disabled={!state} onClick={() => void connectNow()}>Connect</button>
           : <button className="primary" disabled={!state || !fields || problems.length > 0 || !!ready || busy} onClick={() => void signNow()}>{busy ? "Waiting for the device…" : "Approve on the device"}</button>}
+      </div>
+    </div>
+  );
+}
+
+
+/** `qor_sendTransaction`: show what the site wants to send, the fee and the checks; on approval the device signs it and the wallet broadcasts it. */
+function SendTx({ id, req, state, ready }: { id: string; req: Pending; state: State; ready: string | null }) {
+  const host = new URL(req.origin).host;
+  const [prep, setPrep] = useState<{ fee: bigint; balance: bigint; problems: string[]; estimated: boolean } | null>(null);
+  const [phase, setPhase] = useState<"idle" | "signing" | "broadcasting">("idle");
+  const [error, setError] = useState("");
+
+  let described: Described | null = null;
+  let parseError = "";
+  try {
+    described = describeSiteTx(req.params, state.address);
+  } catch (e) {
+    parseError = e instanceof Error ? e.message : String(e);
+  }
+  const fail = (code: number, message: string) => void send({ type: "qorebit:fail", id, code, message });
+  useEffect(() => {
+    if (parseError) fail(-32602, parseError);
+  }, [parseError]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** What the chain says about this account now: the node's chain id, the account, its post-quantum key, the sequence and the fee. */
+  async function check(d: Described) {
+    const nets = await loadNetworks();
+    const net = (state.net in nets ? state.net : "testnet") as NetworkId;
+    const info = nets[net] ?? DEFAULT_NETWORKS[net];
+    const problems: string[] = [];
+    const reported = await nodeChainId(net);
+    if (reported !== info.chainId) throw new Error(`the ${info.name} node reports chain "${reported}", expected "${info.chainId}": nothing was signed`);
+    const acct = await device.account(state.index);
+    if (acct.bech32 !== state.address) throw new Error("the device's account does not match the wallet's selected account: open the wallet and select it again");
+    const chainAcct = await getAccount(net, state.address);
+    if (!chainAcct) throw new Error(`this account has no funds on ${info.name} yet`);
+    if (!(await pqStatus(net, state.address)).registered) problems.push("This account's post-quantum key is not registered. Open the wallet and register it first.");
+    const keyType: KeyType = state.index >= 8 ? "eth_secp256k1" : "secp256k1";
+    const pub = fromHex(acct.publicKey);
+    const probe = buildTx({ messages: [d.msg], memo: d.memo, publicKey: pub, sequence: chainAcct.sequence, gas: DEFAULT_GAS, keyType });
+    const g = await gasFor(net, probe.body, probe.authInfo);
+    let gas = g.gas;
+    if (d.msg.typeUrl.startsWith("/qorechain.crossvm.")) gas = gas * 2n > 1_500_000n ? gas * 2n : 1_500_000n;
+    const balance = await getBalance(net, state.address);
+    if (balance < d.uqorSpend + fee(gas)) problems.push(`Not enough QOR: ${formatQor(d.uqorSpend)} plus the fee of ${formatQor(fee(gas))}, and the balance is ${formatQor(balance)}.`);
+    return { net, info, acct, chainAcct, keyType, pub, gas, fee: fee(gas), balance, problems, estimated: g.simulated };
+  }
+
+  useEffect(() => {
+    if (!described) return;
+    let live = true;
+    check(described).then(
+      (c) => live && setPrep({ fee: c.fee, balance: c.balance, problems: c.problems, estimated: c.estimated }),
+      (e) => live && setPrep({ fee: 0n, balance: 0n, problems: [e instanceof Error ? e.message : String(e)], estimated: false }),
+    );
+    return () => void (live = false);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function approve() {
+    if (!described) return;
+    setError("");
+    try {
+      setPhase("signing");
+      const c = await check(described); // fresh: the sequence and the fee as they are now
+      if (c.problems.length) throw new Error(c.problems[0]);
+      const { body, authInfo } = buildTx({ messages: [described.msg], memo: described.memo, publicKey: c.pub, sequence: c.chainAcct.sequence, gas: c.gas, keyType: c.keyType });
+      const signed = await device.signTx({
+        account: state.index, accountNumber: c.chainAcct.accountNumber, chainId: c.info.chainId, body: toHex(body), authInfo: toHex(authInfo),
+        signBytes: await signBytes(c.net, c.info.chainId),
+      });
+      setPhase("broadcasting");
+      const r = await broadcast(c.net, fromHex(signed.txBytes));
+      if (r.code !== 0) throw new Error(`the chain refused it (code ${r.code}): ${r.log}`);
+      const done = await waitForTx(c.net, r.txhash);
+      if (done.code !== 0) return fail(-32000, `the transaction failed on chain: ${done.rawLog}`);
+      await send({ type: "qorebit:done", id, result: { hash: r.txhash, height: done.height } });
+    } catch (e) {
+      if (e instanceof DeviceError && e.rejected) return fail(4001, "rejected on the device");
+      setError(e instanceof DeviceError && e.refused ? `The device refused to sign: ${e.message}` : e instanceof Error ? e.message : String(e));
+      setPhase("idle");
+    }
+  }
+
+  const problems = prep?.problems ?? [];
+  return (
+    <div className="approve">
+      <div className="brand" style={{ display: "inline-flex" }}><span className="mark" aria-hidden />QOREBIT</div>
+      <h1 style={{ fontSize: 20, margin: "14px 0 0" }}>{described ? `${described.title}?` : "Transaction request"}</h1>
+      <div className="site">
+        <span className="globe">{host.slice(0, 1).toUpperCase()}</span>
+        <span>
+          <b className="mono">{host}</b>
+          <span className="muted small block">{req.origin.startsWith("http://") ? "Not encrypted (http) · asks you to sign a transaction" : "asks you to sign a transaction"}</span>
+        </span>
+      </div>
+      {parseError && <div className="notice bad">This request is not valid: {parseError}</div>}
+      {described && (
+        <dl className="siwq">
+          <dt>From</dt><dd>{state.accountName}</dd>
+          {described.rows.map(([k, v]) => (<><dt key={k}>{k}</dt><dd className="mono small break">{v}</dd></>))}
+          {described.memo && (<><dt>Memo</dt><dd>{described.memo}</dd></>)}
+          <dt>Network</dt><dd className="mono">{state.chainId}</dd>
+          <dt>Fee</dt><dd className="mono">{prep ? `${prep.estimated ? "" : "about "}${formatQor(prep.fee)} QOR` : "…"}</dd>
+        </dl>
+      )}
+      {described?.warnings.map((w) => <div key={w} className="notice warn">{w}</div>)}
+      {state.chainId === "qorechain-vladi" && <div className="notice warn"><b>Mainnet.</b> Real funds.</div>}
+      {problems.map((p) => <div key={p} className="notice bad">{p}</div>)}
+      {ready && <div className="notice warn">{ready}</div>}
+      {error && <div className="notice bad">{error}</div>}
+      {phase === "signing" && <div className="notice warn">Check the device: it shows this transaction. Right button approves (left rejects), then your PIN.</div>}
+      {phase === "broadcasting" && <div className="notice warn">Sending it to the network…</div>}
+      {!parseError && <p className="muted small">The device reads the transaction itself and shows it. Compare it with the details above before you approve.</p>}
+      <div className="buttons">
+        <button className="ghost" onClick={() => fail(4001, "the user rejected the request")} disabled={phase === "broadcasting"}>Reject</button>
+        <button className="primary" disabled={!described || !prep || problems.length > 0 || !!ready || phase !== "idle"} onClick={() => void approve()}>
+          {phase === "signing" ? "Waiting for the device…" : phase === "broadcasting" ? "Sending…" : !prep && described ? "Checking…" : "Approve on the device"}
+        </button>
       </div>
     </div>
   );

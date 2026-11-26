@@ -58,8 +58,11 @@ api.windows.onRemoved.addListener((windowId) => {
 
 api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+    // the wallet's own pages (the side panel, the approval window) have an extension url. The approval window is a popup, which the
+    // browser reports with a tab too, so a tab does not tell a website from the wallet: the url does (a web page cannot fake it)
+    const fromWallet = !!sender.url && sender.url.startsWith(api.runtime.getURL(""));
     // from a website (through content.js)
-    if (msg?.type === "qorebit:request" && sender.tab) {
+    if (msg?.type === "qorebit:request" && sender.tab && !fromWallet) {
       const origin = sender.origin ?? new URL(sender.url).origin;
       if (!/^https?:\/\//.test(origin)) return sendResponse(err(4100, "unsupported page"));
       const st = await getState();
@@ -80,12 +83,20 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (typeof m !== "string" || m.length > 4000) return sendResponse(err(-32602, "params[0].message must be the sign-in message"));
           return sendResponse(await ask(origin, msg.method, [{ message: m }]));
         }
+        case "qor_sendTransaction": {
+          if (!isConn) return sendResponse(err(4100, "this site is not connected: call qor_requestAccounts first"));
+          const t = msg.params?.[0];
+          if (!t || typeof t !== "object" || !Array.isArray(t.messages) || t.messages.length !== 1) return sendResponse(err(-32602, "params[0].messages must be a list with exactly one message"));
+          if (t.memo !== undefined && typeof t.memo !== "string") return sendResponse(err(-32602, "memo must be text"));
+          // only these two fields go on; the approval window checks the message itself and shows it
+          return sendResponse(await ask(origin, msg.method, [{ messages: t.messages, memo: t.memo }]));
+        }
         default:
           return sendResponse(err(4200, "unsupported method"));
       }
     }
     // from the wallet's own approval page (an extension page, not a tab)
-    if (sender.url && sender.url.startsWith(api.runtime.getURL("")) && !sender.tab) {
+    if (fromWallet) {
       const r = requests.get(msg?.id);
       if (msg?.type === "qorebit:get") return sendResponse(r ? { origin: r.origin, method: r.method, params: r.params } : null);
       if (msg?.type === "qorebit:done" && r) {

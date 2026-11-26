@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fromHex, toHex } from "@qorechain/qoresign";
-import { bridgeStatus, device, DeviceError, fundDevnet, loadNetworks, type DeviceAccount, type Security } from "./bridge";
+import { bridgeStatus, device, DeviceError, ORIGIN_BLOCKED, fundDevnet, loadNetworks, type DeviceAccount, type Security } from "./bridge";
 import {
   broadcast, gasFor, getAccount, getBalance, history, nodeChainId, pqStatus, signBytes, waitForTx,
   type Activity, type ChainAccount,
@@ -85,14 +85,19 @@ export function App() {
   const loadDevice = useCallback(async () => {
     const status = await bridgeStatus();
     const up = status === "up";
-    setOriginBlocked(status === "origin");
+    if (status === "origin") setOriginBlocked(true);
     setBridge(up);
     if (!up) return;
     try {
       setSecurity(await device.security());
+      setOriginBlocked(false);
       setDeviceError(null);
       setDeviceBusy(false);
     } catch (e) {
+      if (e instanceof DeviceError && e.code === ORIGIN_BLOCKED) {
+        setOriginBlocked(true);
+        return;
+      }
       // the device is busy with an approval or a PIN: keep what is shown, this poll will be answered next time
       if (e instanceof DeviceError && e.code === 8) {
         setDeviceBusy(true);
@@ -351,8 +356,8 @@ export function App() {
             <b>Mainnet.</b> Real funds. The device screen says MAINNET on every transaction: read it before you press the right button.
           </div>
         )}
-        {bridge === false && (originBlocked ? <OriginBlocked /> : <BridgeDown />)}
-        {bridge && deviceError && <DeviceDown message={deviceError} />}
+        {originBlocked ? <OriginBlocked /> : bridge === false && <BridgeDown />}
+        {bridge && deviceError && !originBlocked && <DeviceDown message={deviceError} />}
         {bridge && deviceBusy && !deviceError && !security && (
           <section className="card center">
             <h2>The device is waiting for you</h2>

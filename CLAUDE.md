@@ -108,7 +108,7 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 - `companion/src/App.tsx` is a shell (header with account and network dropdowns, tab bar Home / Activity / Apps / Device) around one screen per
   feature (`Shell.tsx`: icons, menus, tab bar). Purple theme = the board's palette (`styles.css`). The feature cards (Tokens, Multisig, Smart
   account, Cross-VM with its example buttons, Sign in) are unchanged inside their screens. The extension and the website are the same app.
-- Extension (`extension/`): `inject.js` (MAIN world, `window.qorechain`: `qor_requestAccounts`, `qor_accounts`, `qor_chainId`, `qor_signIn`),
+- Extension (`extension/`): `inject.js` (MAIN world, `window.qorechain`: `qor_requestAccounts`, `qor_accounts`, `qor_chainId`, `qor_signIn`, `qor_sendTransaction`),
   `content.js` (relay; the site comes from the browser's `sender.origin`), `background.js` (connections in `chrome.storage.local`, one waiting request
   per site, an approval popup `index.html#/approve/<id>` rendered by `Approve.tsx`). The wallet writes `qorebit.state` (selected account, chain) to
   extension storage for it. `tools/test-extension-provider.mjs` tests the background against a mocked `chrome`; `check-extension.mjs` pins the
@@ -123,6 +123,10 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   Its origin is a random `moz-extension://uuid`: the bridge takes exact origins from `extension/EXTENSION_ID` (one id per line, add the Chrome Web Store
   id) and `QOREBIT_EXTENSION_ORIGINS`; the app shows the command when the bridge answers 403. `make extension-zip` -> store zips (`STORE.md`). `web-ext lint`
   passes (0 errors; 2 innerHTML warnings are React's). Not run in a real Firefox yet.
+
+- `qor_sendTransaction` (one message; `siteTx.ts` validates and describes it, `Approve.tsx::SendTx` checks the chain, shows the fee, the device signs, the wallet
+  broadcasts and waits; same pipeline as `App.submit`, duplicated on purpose to keep the approval window self-contained). `extension/demo/` is a test page.
+  Parsing and the background rules are tested; the whole flow (extension -> board -> chain) has not been run in a real browser yet.
 
 ## Rules
 
