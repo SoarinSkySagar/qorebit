@@ -114,6 +114,10 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   extension storage for it. `tools/test-extension-provider.mjs` tests the background against a mocked `chrome`; `check-extension.mjs` pins the
   permissions (`sidePanel`, `storage`) and the two content scripts. Not tried in a real Chrome yet.
 
+- Password lock (extension only): `lock.ts` (PBKDF2-SHA-256, 600k rounds, salted hash in `chrome.storage.local`; the unlocked flag in
+  `chrome.storage.session`, so it lasts until the browser closes; wrong-try throttle), `LockScreen.tsx` (`LockGate` wraps the wallet and the
+  approval window in `main.tsx`; autofocus + Enter; `PasswordCard` in Device). It gates the pages, not the keys. No reset in the UI on purpose.
+
 ## Rules
 
 - Approval of a transaction happens on the device, never only in the companion. Never add an API that signs a bare

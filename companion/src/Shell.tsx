@@ -17,6 +17,7 @@ const PATHS: Record<string, ReactNode> = {
   smart: <><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></>,
   crossvm: <><path d="M4 8h13" /><path d="M14 4l4 4-4 4" /><path d="M20 16H7" /><path d="M10 12l-4 4 4 4" /></>,
   signin: <><rect x="4" y="3" width="16" height="18" rx="3" /><circle cx="12" cy="10" r="2.5" /><path d="M7.5 17c.8-2 2.4-3 4.5-3s3.7 1 4.5 3" /></>,
+  lock: <><rect x="5" y="11" width="14" height="9" rx="2.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
   back: <><path d="M15 5l-7 7 7 7" /></>,
   copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h8" /></>,
 };

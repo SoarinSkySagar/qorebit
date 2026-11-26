@@ -87,6 +87,13 @@ nothing from pages. Two tiny scripts run on web pages only to offer them `window
 The bridge accepts the extension by its fixed id (`extension/EXTENSION_ID`, pinned by the key in `extension/manifest.json`), not by a
 pattern, so another extension cannot use the device. Approval of every transaction still happens on the device.
 
+**The password lock.** The first time you open the extension it asks you to create a password (at least 8 characters, with a strength
+bar). After that it opens on the password field with the keyboard already in it: type and press Enter. Once unlocked it stays open for the
+browser session (the side panel and the approval window share it; closing the browser locks it again). The lock icon at the top locks it
+now; **Device → Wallet password** changes or removes the password. Five wrong tries start a growing wait. The password only locks the
+wallet's pages in your browser: the keys are on the device, behind its PIN. If you forget it, remove the extension and load it again
+(nothing is lost). The website has no password lock.
+
 **The wallet's screens** (the website is the same): the account menu (Native 1..8, EVM 1..8) and the network menu are at the top;
 **Home** (balance, Send, Receive, Tokens, recent activity), **Activity**, **Apps** (Sign in with QoreChain, Multisig, Smart account,
 Cross-VM calls, each its own screen) and **Device** (PIN, recovery words, passphrase, restore, erase) are in the bar at the bottom.

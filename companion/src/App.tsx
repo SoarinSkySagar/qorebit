@@ -11,6 +11,8 @@ import { SignInCard } from "./SignIn";
 import { CrossVmCard } from "./CrossVm";
 import { SmartAccountCard } from "./SmartAccount";
 import { qorToEvmHex } from "./crossVmMsg";
+import { PasswordCard } from "./LockScreen";
+import { lockAvailable, lockNow } from "./lock";
 import { ACCOUNTS, AccountMenu, Icon, NetworkMenu, ScreenHead, TabBar, Tile, accountName, type View } from "./Shell";
 import { DEFAULT_NETWORKS, NETWORK_IDS, type NetworkId, type NetworkInfo } from "./networks";
 import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg, type KeyType } from "./tx";
@@ -332,6 +334,9 @@ export function App() {
         <div className="brand" title="Qorebit"><span className="mark" aria-hidden />QOREBIT</div>
         <AccountMenu index={index} onIndex={setIndex} address={acct?.bech32 ?? null} />
         <NetworkMenu net={net} networks={networks} onNet={(n) => { setNotice(null); setNet(n); }} />
+        {lockAvailable() && (
+          <button className="iconbtn" onClick={() => void lockNow()} title="Lock the wallet" aria-label="Lock the wallet"><Icon name="lock" /></button>
+        )}
         <span className="status" title={bridge === null ? "…" : !bridge ? "bridge not running" : security ? (security.chip ? "Dabao connected" : "emulator connected") : "no device"}>
           <span className={`dot ${bridge && security ? "ok" : "bad"}`} aria-hidden />
         </span>
@@ -435,6 +440,7 @@ export function App() {
             {view === "settings" && (
               <>
                 <ScreenHead title="Device" />
+                <PasswordCard />
                 <DeviceCard security={security} busy={!!wait} act={deviceAction} />
                 <p className="foot">Qorebit wallet · hybrid signatures: secp256k1 + ML-DSA-87 · keys never leave the device · a research prototype, unaudited</p>
               </>
