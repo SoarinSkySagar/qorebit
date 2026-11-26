@@ -538,7 +538,7 @@ def run_window(dev, screen, status, title):
 
     pygame.init()
     PW, PH = 240 * SCALE, 280 * SCALE
-    W, H = PW + 80, PH + 200
+    W, H = PW + 80, PH + 224
     win = pygame.display.set_mode((W, H))
     pygame.display.set_caption(title)
     clock = pygame.time.Clock()
@@ -602,15 +602,23 @@ def run_window(dev, screen, status, title):
             t = label.render("no device", True, (110, 114, 124))
             win.blit(t, t.get_rect(center=(W // 2, oy + PH // 2)))
 
-        # the two buttons: left = 0 / Reject (red), right = 1 / Approve (green)
-        for rect, right, name, color in ((btn_left, False, "LEFT  0", (255, 74, 74)), (btn_right, True, "RIGHT  1", (46, 224, 122))):
-            base = color if live else (70, 74, 82)
+        # the two buttons: left = 0 / Reject (red), right = 1 / Approve (green); dim until the device asks for an answer
+        mouse = pygame.mouse.get_pos()
+        for rect, right, title, sub, color in (
+            (btn_left, False, "REJECT", "LEFT  ·  0", (255, 74, 74)),
+            (btn_right, True, "APPROVE", "RIGHT  ·  1", (46, 224, 122)),
+        ):
+            base = color if live else tuple(int(v * 0.55) for v in color)
             on = time.time() < lit["until"] and lit["side"] == right
-            pygame.draw.rect(win, tuple(v // (2 if on else 5) for v in base), rect, border_radius=34)
+            hover = live and rect.collidepoint(mouse)
+            fill = tuple(v // (2 if on else 3 if hover else 6) for v in base)
+            pygame.draw.rect(win, fill, rect, border_radius=34)
             pygame.draw.rect(win, base, rect, width=3, border_radius=34)
-            t = label.render(name, True, base)
-            win.blit(t, t.get_rect(center=rect.center))
-        keys = small.render("left = 0 / reject      right = 1 / approve      (click, or Left / Right arrow keys)", True, (110, 114, 124))
+            t1 = label.render(title, True, base)
+            t2 = small.render(sub, True, base)
+            win.blit(t1, t1.get_rect(center=(rect.centerx, rect.centery - 11)))
+            win.blit(t2, t2.get_rect(center=(rect.centerx, rect.centery + 14)))
+        keys = small.render("two buttons: click them, or press the Left / Right arrow keys (A / D)   ·   Esc rejects", True, (110, 114, 124))
         win.blit(keys, keys.get_rect(midtop=(W // 2, btn_left.bottom + 8)))
         dot = (46, 224, 122) if screen.get("connected") else (255, 74, 74)
         pygame.draw.circle(win, dot, (W - 40, 30), 5)

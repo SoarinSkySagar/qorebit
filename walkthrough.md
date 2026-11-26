@@ -36,7 +36,7 @@ No Linux x86-64 (so no local chain)? `make web-emu` starts the same without it; 
 ## 4. The two buttons
 
 The device window shows the device's screen and two buttons. The **left** button = 0 = reject. The **right** button = 1 = approve.
-One click is the answer. Click them, or use the Left / Right arrow keys.
+One click is the answer. Click them, or use the Left / Right arrow keys (A / D; Esc rejects). The buttons are labelled REJECT and APPROVE and stay dim until the device asks for an answer.
 
 The same two answers are used everywhere: approving a transaction, typing the 8-press PIN, confirming, and picking words
 when restoring (left = "earlier", right = "this word or later").
