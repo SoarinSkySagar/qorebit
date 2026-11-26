@@ -929,6 +929,7 @@ mod tests {
         let shots = [
             ("16-send-to-a-long-address", Screen::Approval(to_msig), 55),
             ("20-cross-vm", Screen::Approval(Approval { tag: "CROSS-VM", heading: "Cross-VM call", big: None, rows: vec![Row::Kv("Action", "Call a contract".into()), Row::Warn("Details: see website".into()), Row::Kv("Size / id", "212 bytes / 4c1d02aa".into()), Row::Kv("From", "EVM account 1".into()), Row::Kv("Max fee", "0.1 QOR".into()), Row::Kv("Network", "qorechain-diana".into())] }), 55),
+            ("21-smart-account", Screen::Approval(Approval { tag: "SMART ACCT", heading: "Smart account", big: None, rows: vec![Row::Kv("Action", "Set spending rules".into()), Row::Warn("Details: see website".into()), Row::Kv("Size / id", "236 bytes / 91be07c2".into()), Row::Kv("From", "Account 1".into()), Row::Kv("Max fee", "0.1 QOR".into()), Row::Kv("Network", "qorechain-diana".into())] }), 55),
             ("19-sign-in", Screen::Approval(Approval { tag: "SIGN IN", heading: "Sign in to a website", big: None, rows: vec![Row::Text("Site: app.example.com".into()), Row::Kv("Account", "Account 1".into()), Row::Kv("Network", "qorechain-diana".into()), Row::Kv("Expires", "2026-11-26 10:10 UTC".into()), Row::Text("Sign in to Example and read your profile".into())] }), 55),
             ("18-send-token", Screen::Approval(Approval { tag: "SEND", heading: "Send", big: None, rows: vec![
                 Row::Addr("To", "qor19ltfv6u4sfx6hz0veu6p80r69pleufhmvn2zmk".to_string()),

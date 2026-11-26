@@ -115,7 +115,7 @@ export function CrossVmCard({ net, acct, index, why, onSubmit, lastTx }: Props) 
       <h2>Cross-VM calls</h2>
       <p className="muted small">
         QoreChain runs several virtual machines on one chain. One transaction from your account can call a contract on another one. From an
-        <b> EVM account</b> (the EVM tab above) this is <b>EVM to Native</b>: the call starts on the EVM side and runs a native CosmWasm contract.
+        <b> EVM account</b> (pick one in the account menu at the top) this is <b>EVM to Native</b>: the call starts on the EVM side and runs a native CosmWasm contract.
         From a native account it goes the other way. The device signs it like any transaction and shows CROSS-VM.
       </p>
       <p className="small">

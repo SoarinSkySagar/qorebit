@@ -238,6 +238,19 @@ fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen:
             rows.push(from);
             ("CROSS-VM", "Cross-VM call", None)
         }
+        // a smart account (the chain's abstractaccount module): create it or change its spending rules; details on the website
+        Msg::Other { type_url, len, id } if type_url.starts_with("/qorechain.abstractaccount.v1.") => {
+            let action = match type_url.rsplit('.').next().unwrap_or("") {
+                "MsgCreateAbstractAccount" => "Create smart account",
+                "MsgUpdateSpendingRules" => "Set spending rules",
+                _ => "Smart account action",
+            };
+            rows.push(Row::Kv("Action", action.to_string()));
+            rows.push(Row::Warn("Details: see website".into()));
+            rows.push(Row::Kv("Size / id", format!("{len} bytes / {}", id.iter().map(|b| format!("{b:02x}")).collect::<String>())));
+            rows.push(from);
+            ("SMART ACCT", "Smart account", None)
+        }
         Msg::Other { type_url, len, id } => {
             let name = type_url.rsplit('.').next().unwrap_or(type_url);
             rows.push(Row::Kv("Type", name.to_string()));

@@ -82,10 +82,27 @@ Then open `chrome://extensions`, switch on **Developer mode**, click **Load unpa
 Start the bridge as usual (`make demo`, `make web-emu` or `make board-virtual`), then click the Qorebit button in the
 toolbar. Chrome 114 or newer is needed (side panel).
 
-What it can do: only talk to the local bridge (`http://127.0.0.1:7630`); it asks for no other site and no page access
-(`make test` checks the manifest). The bridge accepts it by its fixed id (`extension/EXTENSION_ID`, pinned by the key in
-`extension/manifest.json`), not by a pattern, so another extension cannot use the device. Approval of every transaction
-still happens on the device.
+What it can do: talk to the local bridge (`http://127.0.0.1:7630`) and keep the selected account in its own storage. It reads
+nothing from pages. Two tiny scripts run on web pages only to offer them `window.qorechain` (below); `make test` checks the manifest.
+The bridge accepts the extension by its fixed id (`extension/EXTENSION_ID`, pinned by the key in `extension/manifest.json`), not by a
+pattern, so another extension cannot use the device. Approval of every transaction still happens on the device.
+
+**The wallet's screens** (the website is the same): the account menu (Native 1..8, EVM 1..8) and the network menu are at the top;
+**Home** (balance, Send, Receive, Tokens, recent activity), **Activity**, **Apps** (Sign in with QoreChain, Multisig, Smart account,
+Cross-VM calls, each its own screen) and **Device** (PIN, recovery words, passphrase, restore, erase) are in the bar at the bottom.
+
+**Websites: Sign In With QoreChain without pasting.** A page can call `window.qorechain`:
+
+```js
+const [address] = await window.qorechain.request({ method: "qor_requestAccounts" });   // asks you to connect the site
+const chainId   = await window.qorechain.request({ method: "qor_chainId" });
+const signature = await window.qorechain.request({ method: "qor_signIn", params: [{ message }] }); // SIWQ, signed on the device
+```
+
+`qor_requestAccounts` opens a small Qorebit window ("Connect to this site?"). `qor_signIn` opens the same window with the site and the
+statement, then the device asks for its button and your PIN. The wallet refuses a message whose site is not the requesting site, one for
+another account, and anything the device cannot show in full. The returned object is the SIWQ signature (`ml-dsa-87-hybrid`) that
+`verifySiwq` from `@qorechain/qoresign` checks. Sign-in uses native accounts. Without the extension, the **Sign in** app still takes a pasted message.
 
 ## 6a. Sign in with QoreChain
 
@@ -140,6 +157,20 @@ a note that the details are on the website. The board signs them without reading
 details on the website first.
 
 Multisig works on the local devnet and the testnet. `make test-emu` runs the whole cycle with two device accounts.
+
+## 6d. EVM accounts and Cross-VM calls
+
+Above the balance, the account picker has two lanes: **Native** (Account 1..8) and **EVM** (EVM 1..8). An EVM account shows its `0x…` address
+next to its `qor1…` one; they are the same account. Fund it, register its post-quantum key (as for any account), then open the **Cross-VM calls**
+card. "Example: native call" makes a harmless call to a CW20 contract on the testnet (an allowance of 1 to the contract itself); from an EVM
+account that is **EVM to Native**. The board shows CROSS-VM and the website shows what is called, so check it there before approving; the result
+panel then shows the chain's `crossvm_request` and `crossvm_response`.
+
+## 6e. Smart accounts and spending rules
+
+The **Smart account** card creates a smart account (session based, multisig or social recovery) and edits its spending rules: a limit per
+transaction and per day in QOR, which coins may move, and which EVM calls are allowed (at most 5 rules). Both are signed on the board, which
+shows SMART ACCT. The rules limit linked keys and relayers; they do not limit what you send yourself. Mainnet has smart accounts switched off.
 
 ## 7. With a Dabao board and the display on your laptop (virtual display)
 

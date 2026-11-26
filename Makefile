@@ -251,6 +251,7 @@ test-firmware: ## firmware unit tests (screens, PIN flows, storage, protocol)
 test-companion: ## companion: typecheck, amount parsing, registration message
 	cd $(COMPANION) && npm run typecheck && npm test
 	node $(ROOT)/tools/check-extension.mjs
+	node $(ROOT)/tools/test-extension-provider.mjs
 
 test-emu: ## the wallet end to end on a fresh emulator and the local devnet: the chain verifies the device's signatures (needs make devnet)
 	$(FW)/build.sh emu --vdisplay=true

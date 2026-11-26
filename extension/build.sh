@@ -6,7 +6,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 cd "$HERE/../companion"
 npx tsc --noEmit
 npx vite build --base ./ --outDir ../extension/dist --emptyOutDir
-cp "$HERE/manifest.json" "$HERE/background.js" "$HERE/dist/"
+cp "$HERE/manifest.json" "$HERE/background.js" "$HERE/inject.js" "$HERE/content.js" "$HERE/dist/"
 cp -r "$HERE/icons" "$HERE/dist/icons"
 node "$HERE/../tools/check-extension.mjs"
 echo "extension built: extension/dist (chrome://extensions -> Developer mode -> Load unpacked)"

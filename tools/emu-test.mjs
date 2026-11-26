@@ -344,6 +344,25 @@ try {
     await expectError("an EVM account refuses a transaction that names the native key type", () => call("device.signTx", { account: 8, accountNumber: String(ei2.accountNumber), chainId: CHAIN_ID, body: toHex(wrong.bodyBytes), authInfo: toHex(wrong.authInfoBytes), signBytes: version }), /key type/);
   }
 
+  // 8f. a smart account (the abstractaccount module): create it, then set spending rules; the chain stores both
+  {
+    const sa = await import("../companion/src/smartAccountMsg.ts");
+    const send = async (msg) => {
+      const i = await accountInfo(rest, me);
+      const t = buildTx({ messages: [msg], publicKey: own, sequence: i.sequence, gas: 1_500_000n });
+      const sg = await call("device.signTx", { account: 0, accountNumber: String(i.accountNumber), chainId: CHAIN_ID, body: toHex(t.bodyBytes), authInfo: toHex(t.authInfoBytes), signBytes: version });
+      return broadcast(fromHex(sg.txBytes));
+    };
+    await send(sa.createAbstractAccountMsg(me, "session_based"));
+    // the chain gives each smart account its own address: it is found by its owner
+    const made = ((await (await fetch(`${rest}/qorechain/abstractaccount/v1/accounts`)).json()).accounts ?? []).find((a) => a.owner === me);
+    check(made?.account_type === "session_based" && made.address !== me, `the chain created the smart account (session based, at ${made?.address}) after the device signed it`);
+    await send(sa.updateSpendingRulesMsg(me, made.address, [{ id: "daily", enabled: true, dailyLimit: 5_000_000n, perTxLimit: 1_000_000n, allowedDenoms: ["uqor"], allowedEvmCalls: [], denomLimits: [] }]));
+    const rl = await (await fetch(`${rest}/qorechain/abstractaccount/v1/accounts/${made.address}/spending_rules`)).json();
+    const r0 = rl.rules?.[0];
+    check(r0?.id === "daily" && r0.daily_limit === "5000000" && r0.per_tx_limit === "1000000" && r0.enabled === true, "the chain stored the spending rule the device signed (1 QOR per transaction, 5 QOR per day)");
+  }
+
   // 9. other networks: the chain id is part of what is signed, and mainnet says so on the screen
   const main = buildTx({ messages: [sendMsg(me, you, 250_000_000)], publicKey: own, sequence: 5n });
   const onMain = await call("device.signTx", { account: 0, accountNumber: "9", chainId: "qorechain-vladi", signBytes: "v2", body: toHex(main.bodyBytes), authInfo: toHex(main.authInfoBytes) });

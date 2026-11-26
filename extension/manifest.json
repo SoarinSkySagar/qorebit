@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Qorebit wallet",
-  "version": "0.1.0",
-  "description": "Companion for the Qorebit one-button QoreChain hardware wallet. Talks only to the local bridge (127.0.0.1:7630); every approval happens on the device.",
+  "version": "0.2.0",
+  "description": "Qorebit wallet for the Qorebit QoreChain hardware wallet: a side-panel wallet, and Sign In With QoreChain for websites. Every approval happens on the device.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxLDulwjElL4sP9ZiH7s87uRO2xF6gCSWke+HY2bMn+e4F0VqDcQqGQzL9sytSrv0VrNG4u7SkFX+x6Qez84+bduQPNF2JoYFvh0y+xIe4SgmQggjCkZ0DRaw3Tk69W68POYGml2Dg3uCgVhqu1zrR6KQg1dAwxdPRvkmnZIR76zwMhmxpqeYErG3VmqwhJfRnYd2jykC1xdxQay4wET4kdXgAgxk15LSD44wKexHF6UtnmBJWIRHRP5ccChbpVUxqTMvhvd5sYVxv5tC+7sjzKl651Q9XXnF0LtxQnwv81umgp6ji/SspTbvOiWHLNxo1NR5SnUND5F+BUTanEGdvwIDAQAB",
   "minimum_chrome_version": "114",
   "action": {
@@ -19,7 +19,8 @@
     "service_worker": "background.js"
   },
   "permissions": [
-    "sidePanel"
+    "sidePanel",
+    "storage"
   ],
   "host_permissions": [
     "http://127.0.0.1:7630/*"
@@ -32,5 +33,30 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:7630"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
 }

@@ -37,7 +37,7 @@ With Claude Code, run **`/setup`** (or `/setup emu`): it does the steps above an
 Log in to a website with the hardware wallet (QoreChain's SIWQ standard). The board parses the site's message itself, shows
 the site, network, expiry and statement, and signs both layers (secp256k1 over the ADR-36 document, ML-DSA-87 over a
 domain-prefixed message). It signs nothing that is not a canonical sign-in message, and nothing for another account. Matches
-QoreSign byte for byte (`crates/qorebit-signer/src/siwq.rs`); see [walkthrough.md](walkthrough.md), section 6a.
+QoreSign byte for byte (`crates/qorebit-signer/src/siwq.rs`); with the browser extension a site gets the signature straight from the wallet (`window.qorechain`), no pasting; see [walkthrough.md](walkthrough.md), section 6a.
 
 ### Tokens
 
@@ -53,6 +53,21 @@ multisig, proposing a payment, voting and running it are each an ordinary transa
 own device. The companion app builds and explains them (the **Multisig** card); the board signs them and its screen says
 **MULTISIG** and names the action (create, propose, vote, run), but not the details, so check those on the website
 before you approve. See [walkthrough.md](walkthrough.md) (section 6c).
+
+### EVM accounts and Cross-VM calls
+
+QoreChain has a second account type that works with EVM tools: coin type 60, an `eth_secp256k1` key, the same 20 bytes as a `0x…`
+address and a `qor1…` address, signed over a Keccak-256 digest. The device derives eight of them (EVM 1..8) from the same 24 words, next to
+the eight native accounts, and refuses a transaction whose key type is not the account's. From an EVM account a **Cross-VM call** runs a
+native (CosmWasm) contract (**EVM to Native**); from a native account it goes the other way. The board says **CROSS-VM**, names the action and
+leaves the details to the website, like multisig. Verified on the testnet (EVM account to a CW20 contract: `evm → cosmwasm`, executed).
+
+### Smart accounts and spending rules
+
+The companion's **Smart account** card creates one of the chain's `abstractaccount` accounts (session based, multisig, social recovery) and
+edits its spending rules (per transaction and daily limits, coins, EVM calls). Both are ordinary transactions the owner signs; the board says
+**SMART ACCT** and leaves the details to the website. The rules govern what linked keys and relayers spend for the account, not what you
+send yourself with the device. Linking keys and relayed execution are not in the wallet yet.
 
 ### The two buttons
 
@@ -127,7 +142,7 @@ selected network.
   `make flash` and a transfer), and the two buttons on PB1 / PB2 (`SCREEN=panel`, as in Quazar). The panel build has run on a board: it shows the home screen and answers the host.
 * The dev build draws the screen on the laptop, so malware there could fake the screen and the button. The real
   wallet is the panel build.
-* No Chrome extension (Quazar had one); the website is the companion. Staking messages are shown and signed by the
+* The Chrome extension is the same wallet in a side panel, plus `window.qorechain` for websites (connect, Sign In With QoreChain). Staking messages are shown and signed by the
   device, but the website has no staking page yet. One message per transaction; no off-chain message signing yet.
 * Mainnet is reachable from the website. Nothing here has been tried with real funds. Use the testnet first.
 

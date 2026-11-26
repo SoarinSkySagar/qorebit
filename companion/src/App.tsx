@@ -9,12 +9,13 @@ import { MultisigCard } from "./Multisig";
 import { TokensCard } from "./Tokens";
 import { SignInCard } from "./SignIn";
 import { CrossVmCard } from "./CrossVm";
+import { SmartAccountCard } from "./SmartAccount";
 import { qorToEvmHex } from "./crossVmMsg";
+import { ACCOUNTS, AccountMenu, Icon, NetworkMenu, ScreenHead, TabBar, Tile, accountName, type View } from "./Shell";
 import { DEFAULT_NETWORKS, NETWORK_IDS, type NetworkId, type NetworkInfo } from "./networks";
 import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg, type KeyType } from "./tx";
 
 const short = (s: string, a = 10, b = 6) => (s.length > a + b + 2 ? `${s.slice(0, a)}…${s.slice(-b)}` : s);
-const ACCOUNTS = 8; // native accounts 1..8; EVM-lane accounts are indices 8..16
 const keyTypeOf = (index: number): KeyType => (index >= ACCOUNTS ? "eth_secp256k1" : "secp256k1");
 
 function saved<T extends string>(key: string, allowed: readonly T[], dflt: T): T {
@@ -40,7 +41,9 @@ type Wait = null | { what: string; hint: string };
 export function App() {
   const [networks, setNetworks] = useState<Record<NetworkId, NetworkInfo>>(DEFAULT_NETWORKS);
   const [net, setNet] = useState<NetworkId>(() => saved("qorebit.net", NETWORK_IDS, "devnet"));
-  const [index, setIndex] = useState(0);
+  const [index, setIndexState] = useState(() => { try { const n = Number(localStorage.getItem("qorebit.index")); return Number.isInteger(n) && n >= 0 && n < 2 * ACCOUNTS ? n : 0; } catch { return 0; } });
+  const [view, setView] = useState<View>("home");
+  const setIndex = (i: number) => { setIndexState(i); setNotice(null); try { localStorage.setItem("qorebit.index", String(i)); } catch { /* private mode */ } };
   const [bridge, setBridge] = useState<boolean | null>(null);
   const [security, setSecurity] = useState<Security | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
@@ -123,7 +126,8 @@ export function App() {
       setActivity(act);
       setChainError(null);
       // the device's home screen shows the same balance, address and network
-      device.home(index, b, info.chainId, acct.bech32).catch(() => undefined);
+      // only the tab you are looking at: another open tab on a different account would overwrite it
+      if (!document.hidden) device.home(index, b, info.chainId, acct.bech32).catch(() => undefined);
     } catch (e) {
       if (alive.current && mine === generation.current) setChainError(explain(e));
     }
@@ -137,7 +141,9 @@ export function App() {
     setChainError(null);
     void refresh();
     const t = setInterval(() => void refresh(), 6000);
-    return () => clearInterval(t);
+    const onShow = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onShow); };
   }, [refresh]);
 
   /** Refuse to sign for a node that is on another chain than the network selected. */
@@ -307,16 +313,35 @@ export function App() {
   }
 
   const ready = bridge && security && !deviceError;
+  const why = !!wait ? "Working…" : !security?.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : "";
+  const go = (v: View) => { setNotice(null); setView(v); };
+  const back = () => go(view === "multisig" || view === "smart" || view === "crossvm" || view === "signin" ? "apps" : "home");
+  const evmHex = acct && index >= ACCOUNTS ? qorToEvmHex(acct.bech32) : null;
+
+  // the extension's provider (websites asking for the account) reads which account and network are selected
+  useEffect(() => {
+    if (!acct || acctFor !== index) return;
+    try {
+      (globalThis as any).chrome?.storage?.local?.set({ "qorebit.state": { address: acct.bech32, index, accountName: accountName(index), net, chainId: info.chainId } });
+    } catch { /* not in the extension */ }
+  }, [acct, acctFor, index, net, info.chainId]);
 
   return (
     <div className={`app ${info.real ? "is-real" : ""}`}>
-      <Header net={net} networks={networks} onNet={(n) => { setNotice(null); setNet(n); }} bridge={bridge} security={security} />
-      {info.real && (
-        <div className="banner real" role="status">
-          <b>Mainnet.</b> Real funds. The device screen says MAINNET on every transaction: read it before you press the right button.
-        </div>
-      )}
+      <header className="top">
+        <div className="brand" title="Qorebit"><span className="mark" aria-hidden />QOREBIT</div>
+        <AccountMenu index={index} onIndex={setIndex} address={acct?.bech32 ?? null} />
+        <NetworkMenu net={net} networks={networks} onNet={(n) => { setNotice(null); setNet(n); }} />
+        <span className="status" title={bridge === null ? "…" : !bridge ? "bridge not running" : security ? (security.chip ? "Dabao connected" : "emulator connected") : "no device"}>
+          <span className={`dot ${bridge && security ? "ok" : "bad"}`} aria-hidden />
+        </span>
+      </header>
       <main>
+        {info.real && (
+          <div className="banner real" role="status">
+            <b>Mainnet.</b> Real funds. The device screen says MAINNET on every transaction: read it before you press the right button.
+          </div>
+        )}
         {bridge === false && <BridgeDown />}
         {bridge && deviceError && <DeviceDown message={deviceError} />}
         {bridge && deviceBusy && !deviceError && !security && (
@@ -328,62 +353,98 @@ export function App() {
         {ready && !security.pinSet && <PinSetup onSet={() => deviceAction("Set a signing PIN", "On the device: eight presses, left = 0, right = 1. Then once more to confirm.", device.setPin, "Signing PIN set.")} />}
         {notice && <div className={`notice ${notice.tone}`} role="status">{notice.text}</div>}
         {ready && (
-          <>
-            <AccountPicker index={index} onIndex={setIndex} />
-            <div className="grid">
-              <div className="col">
-                <BalanceCard
-                  info={info} acct={acct} balance={balance} chainAcct={chainAcct} pqRegistered={pqRegistered} chainError={chainError}
+          <div className="screen">
+            {view === "home" && (
+              <>
+                <Hero info={info} acct={acct} balance={balance} evmHex={evmHex} />
+                <div className="quick">
+                  <button onClick={() => go("send")}><span className="ico"><Icon name="send" /></span>Send</button>
+                  <button onClick={() => go("receive")}><span className="ico"><Icon name="receive" /></span>Receive</button>
+                  <button onClick={() => go("tokens")}><span className="ico"><Icon name="tokens" /></span>Tokens</button>
+                  <button onClick={() => go("apps")}><span className="ico"><Icon name="apps" /></span>Apps</button>
+                </div>
+                <AccountStatus
+                  info={info} chainAcct={chainAcct} pqRegistered={pqRegistered} chainError={chainError}
                   onRegister={registerKey} onFaucet={faucet} busy={!!wait}
-                  evmHex={acct && index >= ACCOUNTS ? qorToEvmHex(acct.bech32) : null}
                 />
+                <div className="recent-head"><h2>Recent activity</h2><button className="linkbtn" onClick={() => go("activity")}>See all</button></div>
+                <ActivityCard activity={activity?.slice(0, 4) ?? null} bare />
+              </>
+            )}
+            {view === "send" && (
+              <>
+                <ScreenHead title="Send" onBack={back} />
                 <SendCard disabled={!!wait || !security.pinSet || !pqRegistered || !chainAcct} balance={balance} info={info} onSend={send} why={
                   !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""
                 } />
-                <TokensCard net={net} info={info} acct={acct} qor={balance} onSubmit={submit}
-                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""} />
-                <SignInCard acct={acct} index={index} chainId={info.chainId} onSign={signIn}
-                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : ""} />
-                <CrossVmCard net={net} acct={acct} index={index} lastTx={lastTx} onSubmit={submit}
-                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""} />
-                <MultisigCard
-                  net={net} info={info} acct={acct} onSubmit={submit}
-                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""}
-                />
-              </div>
-              <div className="col">
+              </>
+            )}
+            {view === "receive" && (
+              <>
+                <ScreenHead title="Receive" onBack={back} />
+                <ReceiveCard info={info} acct={acct} evmHex={evmHex} />
+              </>
+            )}
+            {view === "tokens" && (
+              <>
+                <ScreenHead title="Tokens" onBack={back} />
+                <TokensCard net={net} info={info} acct={acct} qor={balance} onSubmit={submit} why={why} />
+              </>
+            )}
+            {view === "activity" && (
+              <>
+                <ScreenHead title="Activity" />
                 <ActivityCard activity={activity} />
+              </>
+            )}
+            {view === "apps" && (
+              <>
+                <ScreenHead title="Apps" />
+                <div className="tiles">
+                  <Tile icon="signin" title="Sign in with QoreChain" text="Log in to websites with this account. The extension does it for you." onClick={() => go("signin")} />
+                  <Tile icon="multisig" title="Multisig" text="Shared accounts: N of M must agree. Create, propose, vote, run." onClick={() => go("multisig")} />
+                  <Tile icon="smart" title="Smart account" text="Spending rules the chain enforces for linked keys." onClick={() => go("smart")} />
+                  <Tile icon="crossvm" title="Cross-VM calls" text="Call a contract on another VM. EVM to Native from an EVM account." onClick={() => go("crossvm")} />
+                </div>
+              </>
+            )}
+            {view === "signin" && (
+              <>
+                <ScreenHead title="Sign in with QoreChain" onBack={back} />
+                <SignInCard acct={acct} index={index} chainId={info.chainId} onSign={signIn} why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : ""} />
+              </>
+            )}
+            {view === "multisig" && (
+              <>
+                <ScreenHead title="Multisig" onBack={back} />
+                <MultisigCard net={net} info={info} acct={acct} onSubmit={submit} why={why} />
+              </>
+            )}
+            {view === "smart" && (
+              <>
+                <ScreenHead title="Smart account" onBack={back} />
+                <SmartAccountCard net={net} acct={acct} onSubmit={submit} why={why} />
+              </>
+            )}
+            {view === "crossvm" && (
+              <>
+                <ScreenHead title="Cross-VM calls" onBack={back} />
+                <CrossVmCard net={net} acct={acct} index={index} lastTx={lastTx} onSubmit={submit} why={why} />
+              </>
+            )}
+            {view === "settings" && (
+              <>
+                <ScreenHead title="Device" />
                 <DeviceCard security={security} busy={!!wait} act={deviceAction} />
-              </div>
-            </div>
-          </>
+                <p className="foot">Qorebit wallet · hybrid signatures: secp256k1 + ML-DSA-87 · keys never leave the device · a research prototype, unaudited</p>
+              </>
+            )}
+          </div>
         )}
       </main>
+      {ready && <TabBar view={view} onView={go} />}
       {wait && <WaitOverlay wait={wait} />}
-      <footer>
-        Qorebit wallet · QoreChain hybrid signatures: secp256k1 + ML-DSA-87 · keys never leave the device · a research prototype, unaudited
-      </footer>
     </div>
-  );
-}
-
-function Header(p: { net: NetworkId; networks: Record<NetworkId, NetworkInfo>; onNet: (n: NetworkId) => void; bridge: boolean | null; security: Security | null }) {
-  return (
-    <header>
-      <div className="brand"><span className="mark" aria-hidden />QOREBIT</div>
-      <div className="seg" role="radiogroup" aria-label="Network">
-        {NETWORK_IDS.map((id) => (
-          <button key={id} role="radio" aria-checked={p.net === id} className={`${p.net === id ? "on" : ""} ${id}`} onClick={() => p.onNet(id)} title={p.networks[id].chainId}>
-            {p.networks[id].name}
-          </button>
-        ))}
-      </div>
-      <div className="chip-row">
-        <span className="chain-id mono">{p.networks[p.net].chainId}</span>
-        <span className={`dot ${p.bridge && p.security ? "ok" : "bad"}`} aria-hidden />
-        <span className="muted small">{p.bridge === null ? "…" : !p.bridge ? "no bridge" : p.security ? (p.security.chip ? "Dabao" : "emulator") : "no device"}</span>
-      </div>
-    </header>
   );
 }
 
@@ -428,63 +489,45 @@ function PinSetup({ onSet }: { onSet: () => void }) {
   );
 }
 
-function AccountPicker({ index, onIndex }: { index: number; onIndex: (i: number) => void }) {
-  const evm = index >= ACCOUNTS;
-  const base = evm ? ACCOUNTS : 0;
-  return (
-    <nav className="accounts" aria-label="Account">
-      <div className="lane" role="radiogroup" aria-label="Account type">
-        <button className={!evm ? "on" : ""} role="radio" aria-checked={!evm} onClick={() => onIndex(index % ACCOUNTS)}>Native</button>
-        <button className={evm ? "on" : ""} role="radio" aria-checked={evm} onClick={() => onIndex(ACCOUNTS + (index % ACCOUNTS))} title="Accounts of the EVM lane: the same identity has a 0x address (MetaMask format) and signs cross-VM calls from the EVM side">EVM</button>
-      </div>
-      {Array.from({ length: ACCOUNTS }, (_, i) => (
-        <button key={i} className={base + i === index ? "on" : ""} onClick={() => onIndex(base + i)} aria-pressed={base + i === index}>
-          {evm ? "EVM" : "Account"} {i + 1}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-function Copy({ text, label = "Copy" }: { text: string; label?: string }) {
+function Copy({ text, label = "Copy", chip }: { text: string; label?: string; chip?: boolean }) {
   const [done, setDone] = useState(false);
   return (
-    <button className="ghost" onClick={() => navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1200); })}>
+    <button className={chip ? "chip-btn" : "ghost"} onClick={() => navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1200); })}>
       {done ? "Copied" : label}
     </button>
   );
 }
 
-function BalanceCard(p: {
-  info: NetworkInfo; acct: DeviceAccount | null; balance: bigint | null; chainAcct: ChainAccount | null | undefined; pqRegistered: boolean | null;
-  chainError: string | null; onRegister: () => void; onFaucet: () => void; busy: boolean; evmHex?: string | null;
-}) {
-  const groups = p.acct ? p.acct.bech32.match(/.{1,4}/g)! : [];
+function Hero(p: { info: NetworkInfo; acct: DeviceAccount | null; balance: bigint | null; evmHex: string | null }) {
   return (
-    <section className="card">
+    <section className="hero">
       <div className="label">Balance · {p.info.name}</div>
       <div className="balance mono">
         {p.balance === null ? "—" : formatQor(p.balance, 4)} <span className="unit">QOR</span>
       </div>
-      <div className="label">Address (check it on the device)</div>
-      <div className="address mono" aria-label={p.acct?.bech32}>
-        {groups.map((g, i) => <span key={i} className={i % 2 ? "alt" : ""}>{g}</span>)}
+      <div className="addr-line">
+        <span className="mono" aria-label={p.acct?.bech32}>{p.acct ? short(p.acct.bech32, 12, 8) : "…"}</span>
+        {p.acct && <Copy text={p.acct.bech32} label="Copy" chip />}
+        {p.evmHex && <Copy text={p.evmHex} label="Copy 0x" chip />}
       </div>
-      {p.evmHex && <div className="muted small mono break">EVM address: {p.evmHex} <span className="sans">(the same account, in the format MetaMask uses)</span></div>}
-      <div className="row">
-        {p.acct && <Copy text={p.acct.bech32} label="Copy address" />}
-        {p.acct && p.evmHex && <Copy text={p.evmHex} label="Copy 0x address" />}
-        <span className={`pill ${p.pqRegistered ? "good" : p.pqRegistered === false ? "warn" : ""}`}>
-          {p.pqRegistered === null ? "post-quantum key: …" : p.pqRegistered ? "post-quantum key registered" : "post-quantum key not registered"}
-        </span>
-      </div>
+    </section>
+  );
+}
+
+/** What this account still needs on this network: funds, then its post-quantum key. */
+function AccountStatus(p: {
+  info: NetworkInfo; chainAcct: ChainAccount | null | undefined; pqRegistered: boolean | null; chainError: string | null;
+  onRegister: () => void; onFaucet: () => void; busy: boolean;
+}) {
+  return (
+    <>
       {p.chainError && <p className="notice bad">{p.chainError}</p>}
       {p.chainAcct === null && (
         <div className="hint">
           <p>This address has not received anything on {p.info.name} yet, so the chain does not know it.</p>
           {p.info.faucet === "bridge" && <button className="primary" disabled={p.busy} onClick={p.onFaucet}>Get 1,000 test QOR</button>}
           {p.info.faucet && p.info.faucet !== "bridge" && <a className="btn" href={p.info.faucet} target="_blank" rel="noopener noreferrer">Open the {p.info.name} faucet</a>}
-          {!p.info.faucet && <p className="muted small">Send QOR to the address above from another wallet.</p>}
+          {!p.info.faucet && <p className="muted small">Send QOR to your address from another wallet (Receive shows it).</p>}
         </div>
       )}
       {p.chainAcct && p.pqRegistered === false && (
@@ -494,8 +537,31 @@ function BalanceCard(p: {
         </div>
       )}
       {p.chainAcct && p.pqRegistered && p.info.faucet === "bridge" && (
-        <div className="row"><button className="ghost" disabled={p.busy} onClick={p.onFaucet}>Get 1,000 test QOR</button></div>
+        <div className="row" style={{ marginBottom: 10 }}><button className="ghost" disabled={p.busy} onClick={p.onFaucet}>Get 1,000 test QOR</button></div>
       )}
+    </>
+  );
+}
+
+function ReceiveCard(p: { info: NetworkInfo; acct: DeviceAccount | null; evmHex: string | null }) {
+  const groups = p.acct ? p.acct.bech32.match(/.{1,4}/g)! : [];
+  return (
+    <section className="card receive">
+      <div className="label">Your address on {p.info.name} (check it on the device)</div>
+      <div className="address mono" aria-label={p.acct?.bech32}>
+        {groups.map((g, i) => <span key={i} className={i % 2 ? "alt" : ""}>{g}</span>)}
+      </div>
+      <div className="row" style={{ justifyContent: "center" }}>
+        {p.acct && <Copy text={p.acct.bech32} label="Copy address" />}
+      </div>
+      {p.evmHex && (
+        <>
+          <div className="label" style={{ marginTop: 16 }}>The same account as an EVM address</div>
+          <div className="mono small break">{p.evmHex}</div>
+          <div className="row" style={{ justifyContent: "center", marginTop: 8 }}><Copy text={p.evmHex} label="Copy 0x address" /></div>
+        </>
+      )}
+      <p className="muted small" style={{ marginTop: 14 }}>Only send QOR and QoreChain tokens to this address, on the network shown above.</p>
     </section>
   );
 }
@@ -533,10 +599,10 @@ function SendCard(p: { disabled: boolean; why: string; balance: bigint | null; i
   );
 }
 
-function ActivityCard({ activity }: { activity: Activity[] | null }) {
+function ActivityCard({ activity, bare }: { activity: Activity[] | null; bare?: boolean }) {
   return (
     <section className="card">
-      <h2>Activity</h2>
+      {!bare && <h2>Activity</h2>}
       {activity === null && <p className="muted">Loading…</p>}
       {activity && activity.length === 0 && <p className="muted">Nothing yet on this network.</p>}
       <ul className="activity">

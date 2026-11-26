@@ -15,11 +15,18 @@ const der = Buffer.from(m.key, "base64");
 const id = [...createHash("sha256").update(der).digest("hex").slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join("");
 const pinned = readFileSync(join(root, "EXTENSION_ID"), "utf8").trim();
 if (id !== pinned) fail(`the manifest key gives id ${id}, EXTENSION_ID says ${pinned}`);
-// minimal powers: the side panel and the local bridge, nothing else
+// minimal powers: the side panel, its own storage and the local bridge; two small content scripts that only relay the
+// window.qorechain provider (no host permissions for pages, no page data is read)
 const perms = JSON.stringify(m.permissions ?? []);
-if (perms !== '["sidePanel"]') fail("permissions must be exactly sidePanel, got " + perms);
+if (perms !== '["sidePanel","storage"]') fail("permissions must be exactly sidePanel and storage, got " + perms);
 if (JSON.stringify(m.host_permissions) !== '["http://127.0.0.1:7630/*"]') fail("host_permissions must be the bridge only");
-if (m.content_scripts || m.externally_connectable || m.web_accessible_resources) fail("no content scripts or web pages may reach into the extension");
+if (m.externally_connectable || m.web_accessible_resources) fail("no web pages may reach into the extension");
+const cs = (m.content_scripts ?? []).map((c) => `${c.js.join(",")}|${c.world ?? "ISOLATED"}|${c.matches.join(",")}`).sort();
+if (JSON.stringify(cs) !== JSON.stringify(["content.js|ISOLATED|http://*/*,https://*/*", "inject.js|MAIN|http://*/*,https://*/*"])) fail("content scripts must be exactly inject.js (MAIN) and content.js, on http(s) pages: " + JSON.stringify(cs));
+for (const f of ["inject.js", "content.js"]) {
+  const t = readFileSync(join(root, f), "utf8");
+  if (/\b(eval|new Function|XMLHttpRequest|fetch\()/.test(t)) fail(`${f} must not use eval, fetch or XMLHttpRequest`);
+}
 for (const f of [m.side_panel.default_path, m.background.service_worker, ...Object.values(m.icons)]) {
   if (!existsSync(join(root, "dist", f)) && !existsSync(join(root, f)) && f !== m.side_panel.default_path) fail("missing file " + f);
 }

@@ -84,6 +84,36 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 - The app image must fit the Dabao's app region (893,696 bytes); `build.sh` fails above it, and Cargo.toml optimises for size except the
   signature crates. An image over the limit flashes fine and never starts (the board then answers nothing over USB).
 
+## EVM-lane accounts and Cross-VM
+
+- `Wallet::account(index)`: 0..8 native (`m/44'/118'/0'/0/i`, sha256 digest, `secp256k1.PubKey`), 8..16 EVM lane (`m/44'/60'/0'/0/i`, keccak256 digest,
+  `/cosmos.evm.crypto.v1.ethsecp256k1.PubKey`; the address is the keccak of the public key, the same 20 bytes as the `0x` address). The PQ key seed
+  formula is unchanged (it uses the bech32 address). `check` refuses a transaction whose key type is not the account's. Vectors: the `evm` section.
+- `MsgCrossVMCall` (`companion/src/crossVmMsg.ts`, verified against `qorechaind tx crossvm call`); the board labels `/qorechain.crossvm.v1.*` as CROSS-VM.
+  An ERC-20 `transfer` through a cross-VM call reverts (the EVM caller is not the account that holds the balance): the card offers a generic call.
+- The EVM raw-transaction path (the 0x…0901 precompile, the EVM window) is NOT implemented.
+- The site sends the board's home balance only from the visible tab (`document.hidden`): another tab on another account used to overwrite it.
+
+## Smart accounts (the chain's abstractaccount module): companion only
+
+- `MsgCreateAbstractAccount` (owner 1, account_type 2) and `MsgUpdateSpendingRules` (owner, account_address, rules): encoders in
+  `companion/src/smartAccountMsg.ts`, golden bytes from the node in `test/smartaccount.test.mjs`; the board labels `/qorechain.abstractaccount.v1.*`
+  as SMART ACCT (`Msg::Other`, no decoding). `make test-emu` creates one and sets a rule on the devnet.
+- The chain gives each new smart account its own address (older testnet ones have the owner's address): find them with `GET
+  /qorechain/abstractaccount/v1/accounts` filtered by `owner`; rules at `/accounts/{address}/spending_rules`. Limits are in uqor.
+- Rules bind linked keys (ed25519 authenticators) and relayers, not the owner's own direct sends. Linking keys and `execute-cosmos` are not built.
+
+## The wallet UI and the extension provider
+
+- `companion/src/App.tsx` is a shell (header with account and network dropdowns, tab bar Home / Activity / Apps / Device) around one screen per
+  feature (`Shell.tsx`: icons, menus, tab bar). Purple theme = the board's palette (`styles.css`). The feature cards (Tokens, Multisig, Smart
+  account, Cross-VM with its example buttons, Sign in) are unchanged inside their screens. The extension and the website are the same app.
+- Extension (`extension/`): `inject.js` (MAIN world, `window.qorechain`: `qor_requestAccounts`, `qor_accounts`, `qor_chainId`, `qor_signIn`),
+  `content.js` (relay; the site comes from the browser's `sender.origin`), `background.js` (connections in `chrome.storage.local`, one waiting request
+  per site, an approval popup `index.html#/approve/<id>` rendered by `Approve.tsx`). The wallet writes `qorebit.state` (selected account, chain) to
+  extension storage for it. `tools/test-extension-provider.mjs` tests the background against a mocked `chrome`; `check-extension.mjs` pins the
+  permissions (`sidePanel`, `storage`) and the two content scripts. Not tried in a real Chrome yet.
+
 ## Rules
 
 - Approval of a transaction happens on the device, never only in the companion. Never add an API that signs a bare
