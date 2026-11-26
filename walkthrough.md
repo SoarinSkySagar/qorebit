@@ -122,7 +122,7 @@ shows the site, the amount and recipient (sends and staking are decoded; other t
 the network and the fee, and checks that the account exists, its post-quantum key is registered and the balance covers it. On Approve the device
 shows the transaction itself and asks for the button and PIN; the wallet then sends it and answers the site with `{ hash, height }` once it is
 in a block, or an error (code 4001 if you reject, on the window or on the device). The site must be connected first. To try it,
-serve the demo page and open it with the extension installed: `python3 -m http.server 8080 -d extension/demo`, then http://localhost:8080.
+run `make demo-site` and open http://localhost:8080 with the extension installed: **Sign in with QoreChain** connects the site and signs a real sign-in message on the device (the page builds the message the way `createSiwqMessage` does), then **Send with the wallet** asks for a transaction.
 
 `qor_requestAccounts` opens a small Qorebit window ("Connect to this site?"). `qor_signIn` opens the same window with the site and the
 statement, then the device asks for its button and your PIN. The wallet refuses a message whose site is not the requesting site, one for

@@ -18,14 +18,18 @@
   <p class="muted">A tiny page that uses <code>window.qorechain</code>. It needs the Qorebit extension, the bridge and the device. Use the testnet or devnet.</p>
   <p id="status" class="muted">Looking for the wallet…</p>
 
-  <h2>1. Connect</h2>
-  <button id="connect">Connect the wallet</button>
+  <h2>1. Sign in with QoreChain</h2>
+  <p class="muted">Press the button: the wallet asks to connect this site (the first time), then to sign a sign-in message on your device. No password, no pasting.</p>
+  <button id="signin">Sign in with QoreChain</button>
+  <p id="who" class="muted"></p>
 
   <h2>2. Send a transaction</h2>
+  <p class="muted">Available once you are signed in.</p>
   <label class="muted">To <input id="to" placeholder="qor1…" spellCheck="false" /></label>
   <label class="muted">Amount (QOR) <input id="amount" value="0.1" /></label>
   <label class="muted">Memo (optional) <input id="memo" maxlength="120" /></label>
-  <button id="send">Send with the wallet</button>
+  <button id="send" disabled>Send with the wallet</button>
+  <button id="signout" style="display:none; background:#302452; margin-left:8px">Sign out</button>
 
   <h2>Result</h2>
   <pre id="out">nothing yet</pre>

@@ -1,7 +1,10 @@
-// A page using the Qorebit provider: connect, then ask the wallet to send QOR (the wallet shows it, the device signs it).
+// A page using the Qorebit provider: sign in with QoreChain (connect + a signed sign-in message), then ask the wallet to send QOR
+// (the wallet shows it, the device signs it). A real site verifies the sign-in signature on its server with `verifySiwq` from
+// @qorechain/qoresign (both the secp256k1 and the ML-DSA-87 signature); this page only shows what it got back.
 const $ = (id) => document.getElementById(id);
 const show = (v) => ($("out").textContent = typeof v === "string" ? v : JSON.stringify(v, null, 2));
 const fail = (e) => show(`error ${e.code ?? ""}: ${e.message ?? e}`);
+const STATEMENT = "Sign in to the Qorebit demo site";
 let account = null;
 
 function ready() {
@@ -10,13 +13,41 @@ function ready() {
 if (window.qorechain) ready(); else window.addEventListener("qorechain#initialized", ready);
 setTimeout(ready, 600);
 
-$("connect").onclick = async () => {
+// the sign-in message in the QoreChain (SIWQ) layout, as createSiwqMessage from @qorechain/qoresign writes it
+function siwqMessage({ domain, address, statement, uri, chainId, nonce, issuedAt, expirationTime }) {
+  return [
+    `${domain} wants you to sign in with your QoreChain account:`, address, "", statement, "",
+    `URI: ${uri}`, "Version: 1", `Chain ID: ${chainId}`, `Nonce: ${nonce}`, `Issued At: ${issuedAt}`, `Expiration Time: ${expirationTime}`,
+  ].join("\n");
+}
+const nonce = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+
+function signedIn(on) {
+  $("send").disabled = !on;
+  $("signout").style.display = on ? "" : "none";
+  $("signin").textContent = on ? "Signed in: sign in again" : "Sign in with QoreChain";
+  $("who").textContent = on ? `Signed in as ${account}` : "";
+}
+
+$("signin").onclick = async () => {
   try {
+    // 1. connect (the wallet asks the first time) and find out the network
     [account] = await window.qorechain.request({ method: "qor_requestAccounts" });
     const chainId = await window.qorechain.request({ method: "qor_chainId" });
-    show({ account, chainId });
-  } catch (e) { fail(e); }
+    // 2. the sign-in message: this site, this account, a fresh nonce, a short expiry
+    const now = new Date();
+    const message = siwqMessage({
+      domain: location.host, address: account, statement: STATEMENT, uri: `${location.origin}/`, chainId, nonce: nonce(),
+      issuedAt: now.toISOString(), expirationTime: new Date(now.getTime() + 10 * 60_000).toISOString(),
+    });
+    // 3. the wallet shows it, the device shows it and signs it with both keys
+    const signature = await window.qorechain.request({ method: "qor_signIn", params: [{ message }] });
+    signedIn(true);
+    show({ signedInAs: account, chainId, message, signature: { ...signature, pq: { ...signature.pq, signature: signature.pq.signature.slice(0, 40) + "… (" + signature.pq.signature.length + " base64 chars)" } } });
+  } catch (e) { signedIn(false); fail(e); }
 };
+
+$("signout").onclick = () => { account = null; signedIn(false); show("signed out"); };
 
 $("send").onclick = async () => {
   try {
