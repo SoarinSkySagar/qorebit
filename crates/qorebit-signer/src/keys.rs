@@ -3,6 +3,9 @@
 //!
 //! * classical key: BIP-39 seed (with the optional passphrase) -> BIP-32 `m/44'/118'/0'/0/i`
 //!   (secp256k1; the address is `bech32("qor", ripemd160(sha256(compressed key)))`);
+//! * EVM-lane accounts ("eth-native", indices 8..16): BIP-32 `m/44'/60'/0'/0/(i-8)`, address = the last 20 bytes of
+//!   `keccak256(uncompressed public key)` (the same 20 bytes are the account's `0x` address), classical signatures over
+//!   `keccak256` of the sign document instead of `sha256`;
 //! * post-quantum key (ML-DSA-87, FIPS 204): the "canonical" key of an account, seeded with
 //!   `SHAKE256("qorechain:pqc:v1|" + address + "|" + mnemonic, 32 bytes)`. It is bound to the
 //!   address and does not use the passphrase.
@@ -18,9 +21,22 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{NonZeroScalar, Scalar};
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256, Sha512};
+use sha3::Keccak256;
 use zeroize::{Zeroize, Zeroizing};
 
+/// Native accounts: indices 0..8, `m/44'/118'/0'/0/i`.
 pub const ACCOUNTS: u32 = 8;
+/// EVM-lane accounts: indices 8..16, `m/44'/60'/0'/0/(i-8)`.
+pub const EVM_ACCOUNTS: u32 = 8;
+
+/// Which family an account belongs to: it decides the address and how the classical signature is made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyKind {
+    /// Cosmos-style: `ripemd160(sha256(key))`, signatures over `sha256`.
+    Native,
+    /// EVM-lane (eth_secp256k1): `keccak256(uncompressed key)[12..]`, signatures over `keccak256`.
+    Eth,
+}
 pub const PQ_PUBLIC_LEN: usize = ml_dsa_87::PK_LEN;
 pub const PQ_SIG_LEN: usize = ml_dsa_87::SIG_LEN;
 pub const ADDRESS_PREFIX: &str = "qor";
@@ -61,25 +77,33 @@ impl Wallet {
         &self.entropy
     }
 
-    /// The account `index` (0..[`ACCOUNTS`]).
+    /// The account `index`: 0..[`ACCOUNTS`] are native accounts, then [`EVM_ACCOUNTS`] EVM-lane accounts.
     #[inline(never)]
     pub fn account(&self, index: u32) -> Result<Account, KeyError> {
-        if index >= ACCOUNTS {
+        let (kind, coin, i) = if index < ACCOUNTS {
+            (KeyKind::Native, 118, index)
+        } else if index < ACCOUNTS + EVM_ACCOUNTS {
+            (KeyKind::Eth, 60, index - ACCOUNTS)
+        } else {
             return Err(KeyError::BadIndex);
-        }
-        let sk = bip32_secp256k1(&self.seed, index)?;
+        };
+        let sk = bip32_secp256k1(&self.seed, coin, i)?;
         let signing = SigningKey::from(&sk);
         let public = compressed(signing.verifying_key());
-        let address = address_bytes(&public);
+        let address = match kind {
+            KeyKind::Native => address_bytes(&public),
+            KeyKind::Eth => eth_address_bytes(signing.verifying_key()),
+        };
         let address_bech = bech32_address(&address);
         let pq_seed = pq_seed(&address_bech, &self.mnemonic);
-        Ok(Account { index, signing, public, address, address_bech, pq_seed, pq: None })
+        Ok(Account { index, kind, signing, public, address, address_bech, pq_seed, pq: None })
     }
 }
 
 /// One account: both keys of a hybrid QoreChain signer.
 pub struct Account {
     pub index: u32,
+    pub kind: KeyKind,
     signing: SigningKey,
     pub public: [u8; 33],
     pub address: [u8; 20],
@@ -114,11 +138,15 @@ impl Account {
         Ok(sig)
     }
 
-    /// Compact secp256k1 signature of `sha256(msg)`, low-S, RFC 6979 (what QoreSign's
+    /// Compact secp256k1 signature of the digest of `msg` (`sha256`, or `keccak256` for an EVM-lane account), low-S,
+    /// RFC 6979 (what QoreSign's
     /// `classicalSign` makes for `secp256k1` keys), checked before it is returned.
     #[inline(never)]
     pub fn classical_sign(&self, msg: &[u8]) -> Result<[u8; 64], KeyError> {
-        let digest = Sha256::digest(msg);
+        let digest: [u8; 32] = match self.kind {
+            KeyKind::Native => Sha256::digest(msg).into(),
+            KeyKind::Eth => Keccak256::digest(msg).into(),
+        };
         let sig: Signature = self.signing.sign_prehash(&digest).map_err(|_| KeyError::Signing)?;
         let sig = sig.normalize_s().unwrap_or(sig);
         use k256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -139,6 +167,13 @@ fn compressed(vk: &VerifyingKey) -> [u8; 33] {
 /// `ripemd160(sha256(compressed public key))`.
 pub fn address_bytes(public: &[u8; 33]) -> [u8; 20] {
     Ripemd160::digest(Sha256::digest(public)).into()
+}
+
+/// An EVM-lane account's address: the last 20 bytes of `keccak256(uncompressed public key without its 0x04 prefix)`.
+pub fn eth_address_bytes(vk: &VerifyingKey) -> [u8; 20] {
+    let p = vk.to_encoded_point(false);
+    let h = Keccak256::digest(&p.as_bytes()[1..]);
+    h[12..].try_into().unwrap()
 }
 
 pub fn bech32_address(addr: &[u8; 20]) -> String {
@@ -169,9 +204,9 @@ pub fn pq_seed(address: &str, mnemonic: &str) -> Zeroizing<[u8; 32]> {
     out
 }
 
-/// BIP-32 `m/44'/118'/0'/0/index`.
+/// BIP-32 `m/44'/coin'/0'/0/index` (coin 118: native accounts, coin 60: EVM-lane accounts).
 #[inline(never)]
-fn bip32_secp256k1(seed: &[u8; 64], index: u32) -> Result<k256::SecretKey, KeyError> {
+fn bip32_secp256k1(seed: &[u8; 64], coin: u32, index: u32) -> Result<k256::SecretKey, KeyError> {
     type H = Hmac<Sha512>;
     const HARD: u32 = 0x8000_0000;
     let mut mac = <H as Mac>::new_from_slice(b"Bitcoin seed").unwrap();
@@ -180,7 +215,7 @@ fn bip32_secp256k1(seed: &[u8; 64], index: u32) -> Result<k256::SecretKey, KeyEr
     let mut key: Zeroizing<[u8; 32]> = Zeroizing::new(i[..32].try_into().unwrap());
     let mut chain: Zeroizing<[u8; 32]> = Zeroizing::new(i[32..].try_into().unwrap());
     i.zeroize();
-    for step in [44 | HARD, 118 | HARD, HARD, 0, index] {
+    for step in [44 | HARD, coin | HARD, HARD, 0, index] {
         let sk = k256::SecretKey::from_bytes((&*key).into()).map_err(|_| KeyError::Derivation)?;
         let mut mac = <H as Mac>::new_from_slice(&*chain).unwrap();
         if step & HARD != 0 {

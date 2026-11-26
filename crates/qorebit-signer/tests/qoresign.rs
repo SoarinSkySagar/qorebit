@@ -217,3 +217,70 @@ fn an_unknown_message_is_shown_blind_whatever_its_bytes() {
     assert!(matches!(&view.msgs[0], tx::Msg::Other { len: 3, .. }));
     tx::check(&view, &mut acct, "qorechain-local", Mode::Hybrid).unwrap();
 }
+
+// ---- EVM-lane (eth-native) accounts: indices 8.., m/44'/60'/0'/0/i, keccak address and keccak sign digest
+
+#[test]
+fn evm_lane_accounts_match_qoresign() {
+    let v = vectors();
+    let w = wallet("");
+    for a in v["evm"]["accounts"].as_array().unwrap() {
+        let i = a["index"].as_u64().unwrap() as u32;
+        let acct = w.account(8 + i).unwrap();
+        assert_eq!(acct.kind, qorebit_signer::keys::KeyKind::Eth);
+        assert_eq!(acct.address_bech, s(&a["address"]), "address of EVM account {i}");
+        assert_eq!(h(&acct.public), s(&a["classicalPublic"]), "public key of EVM account {i}");
+    }
+    // the native accounts are untouched, and index 16 does not exist
+    assert_eq!(w.account(0).unwrap().address_bech, s(&v["accounts"][0]["address"]));
+    assert!(w.account(16).is_err());
+}
+
+#[test]
+fn evm_lane_pq_keys_match_qoresign() {
+    let v = vectors();
+    let w = wallet("");
+    for a in v["evm"]["accounts"].as_array().unwrap() {
+        let i = a["index"].as_u64().unwrap() as u32;
+        let mut acct = w.account(8 + i).unwrap();
+        assert_eq!(sha(&acct.pq_public()[..]), s(&a["pqPublicSha256"]), "ML-DSA key of EVM account {i}");
+    }
+}
+
+#[test]
+fn evm_lane_transactions_match_qoresign_byte_for_byte() {
+    let v = vectors();
+    let w = wallet("");
+    for t in v["evm"]["txs"].as_array().unwrap() {
+        let i = t["index"].as_u64().unwrap() as u32;
+        let mut acct = w.account(8 + i).unwrap();
+        let body = hex::decode(s(&t["bodyBytes"])).unwrap();
+        let auth = hex::decode(s(&t["authInfoBytes"])).unwrap();
+        let view = tx::decode(&body, &auth).unwrap();
+        assert_eq!(view.signer_eth, Some(true));
+        tx::check(&view, &mut acct, s(&t["chainId"]), Mode::Hybrid).unwrap();
+        let r = Request { chain_id: s(&t["chainId"]), account_number: t["accountNumber"].as_u64().unwrap(), body: &body, auth_info: &auth, version: SignBytes::V2, include_public_key: false, mode: Mode::Hybrid };
+        let out = tx::sign(&mut acct, &r).unwrap();
+        assert_eq!(h(&out.classical), s(&t["classicalSig"]), "keccak256 signature of EVM account {i}");
+        assert_eq!(sha(&out.pq.as_ref().unwrap()[..]), s(&t["pqSigSha256"]));
+        assert_eq!(sha(&out.tx_bytes), s(&t["txBytesSha256"]));
+    }
+}
+
+#[test]
+fn an_account_signs_only_with_its_own_key_type() {
+    let v = vectors();
+    let w = wallet("");
+    // an EVM-lane transaction (eth_secp256k1 key) is refused for a native account, and a native one for an EVM account
+    let t = &v["evm"]["txs"][0];
+    let (body, auth) = (hex::decode(s(&t["bodyBytes"])).unwrap(), hex::decode(s(&t["authInfoBytes"])).unwrap());
+    let view = tx::decode(&body, &auth).unwrap();
+    let mut native = w.account(0).unwrap();
+    assert!(tx::check(&view, &mut native, "qorechain-diana", Mode::Hybrid).is_err());
+    let n = &v["txs"][0];
+    let (nb, na) = (hex::decode(s(&n["bodyBytes"])).unwrap(), hex::decode(s(&n["authInfoBytes"])).unwrap());
+    let nview = tx::decode(&nb, &na).unwrap();
+    assert_eq!(nview.signer_eth, Some(false));
+    let mut evm = w.account(8).unwrap();
+    assert!(tx::check(&nview, &mut evm, "qorechain-local", Mode::Hybrid).is_err());
+}

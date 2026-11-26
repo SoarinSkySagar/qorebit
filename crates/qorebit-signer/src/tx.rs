@@ -30,6 +30,8 @@ pub const MSG_DELEGATE: &str = "/cosmos.staking.v1beta1.MsgDelegate";
 pub const MSG_UNDELEGATE: &str = "/cosmos.staking.v1beta1.MsgUndelegate";
 pub const MSG_WITHDRAW_REWARD: &str = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward";
 pub const SECP256K1_PUBKEY: &str = "/cosmos.crypto.secp256k1.PubKey";
+/// The public key type of an EVM-lane (eth_secp256k1) account.
+pub const ETHSECP256K1_PUBKEY: &str = "/cosmos.evm.crypto.v1.ethsecp256k1.PubKey";
 pub const POP_DOMAIN: &str = "qorechain-pqc-pop-v1";
 pub const HYBRID_V2_DOMAIN: &str = "qorechain-pqc-hybrid-v2";
 pub const ALGORITHM_ML_DSA_87: u64 = 1;
@@ -114,6 +116,8 @@ pub struct View {
     pub fee_granter: String,
     pub sequence: u64,
     pub signer_public: Option<Vec<u8>>,
+    /// `Some(true)` when the signer's public key is an eth_secp256k1 key, `Some(false)` for a secp256k1 one.
+    pub signer_eth: Option<bool>,
 }
 
 fn string(b: &[u8]) -> Result<String, TxError> {
@@ -212,6 +216,7 @@ pub fn decode(body: &[u8], auth_info: &[u8]) -> Result<View, TxError> {
         fee_granter: String::new(),
         sequence: 0,
         signer_public: None,
+        signer_eth: None,
     };
     for f in &bfs {
         match (f.num, f.wire) {
@@ -240,9 +245,11 @@ pub fn decode(body: &[u8], auth_info: &[u8]) -> Result<View, TxError> {
                 let s = proto::fields(f.bytes).ok_or(TxError::Malformed("signer info"))?;
                 if let Some(pk) = proto::find(&s, 1) {
                     let a = proto::fields(pk).ok_or(TxError::Malformed("public key"))?;
-                    if proto::find(&a, 1) != Some(SECP256K1_PUBKEY.as_bytes()) {
-                        return refuse("the signer's key is not a secp256k1 key");
+                    let url = proto::find(&a, 1);
+                    if url != Some(SECP256K1_PUBKEY.as_bytes()) && url != Some(ETHSECP256K1_PUBKEY.as_bytes()) {
+                        return refuse("the signer's key is not a secp256k1 or eth_secp256k1 key");
                     }
+                    v.signer_eth = Some(url == Some(ETHSECP256K1_PUBKEY.as_bytes()));
                     let k = proto::fields(proto::find(&a, 2).unwrap_or(&[])).ok_or(TxError::Malformed("public key"))?;
                     v.signer_public = Some(proto::find(&k, 1).unwrap_or(&[]).to_vec());
                 }
@@ -287,6 +294,11 @@ pub fn check(v: &View, acct: &mut Account, chain_id: &str, mode: Mode) -> Result
     if let Some(pk) = &v.signer_public {
         if pk[..] != acct.public[..] {
             return refuse("the transaction names another signer key than this account's");
+        }
+    }
+    if let Some(eth) = v.signer_eth {
+        if eth != (acct.kind == keys::KeyKind::Eth) {
+            return refuse("the transaction's key type is not this account's (EVM accounts use eth_secp256k1 keys)");
         }
     }
     if !v.fee_payer.is_empty() && v.fee_payer != acct.address_bech {

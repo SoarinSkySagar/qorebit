@@ -159,7 +159,7 @@ fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen:
     } else if chain != TESTNET && chain != DEVNET {
         rows.push(Row::Warn("Unknown network".into()));
     }
-    let from = Row::Kv("From", format!("Account {}", acct.index + 1));
+    let from = Row::Kv("From", screen::account_name(acct.index));
     let (tag, heading, big): (&'static str, &'static str, _) = match &view.msgs[0] {
         Msg::Send { to, amount, .. } => {
             rows.push(Row::Addr("To", to.clone()));
@@ -229,6 +229,15 @@ fn describe(view: &tx::View, acct: &Account, chain: &str, mode: Mode) -> screen:
             rows.push(from);
             ("MULTISIG", "Multisig transaction", None)
         }
+        // a cross-VM call (one VM calling a contract on another): the board says so; the contract and payload are read on the website
+        Msg::Other { type_url, len, id } if type_url.starts_with("/qorechain.crossvm.v1.") => {
+            let action = if type_url.ends_with("MsgCrossVMCall") { "Call a contract" } else { "Cross-VM action" };
+            rows.push(Row::Kv("Action", action.to_string()));
+            rows.push(Row::Warn("Details: see website".into()));
+            rows.push(Row::Kv("Size / id", format!("{len} bytes / {}", id.iter().map(|b| format!("{b:02x}")).collect::<String>())));
+            rows.push(from);
+            ("CROSS-VM", "Cross-VM call", None)
+        }
         Msg::Other { type_url, len, id } => {
             let name = type_url.rsplit('.').next().unwrap_or(type_url);
             rows.push(Row::Kv("Type", name.to_string()));
@@ -274,7 +283,7 @@ fn parse_sign_tx(p: &[u8]) -> Option<SignTx<'_>> {
 
 impl App {
     fn account(&self, index: u32) -> Result<Account, Vec<u8>> {
-        self.wallet.account(index).map_err(|_| protocol::error(Status::BadRequest, "no such account (0..8)"))
+        self.wallet.account(index).map_err(|_| protocol::error(Status::BadRequest, "no such account (0..16)"))
     }
 
     fn get_account(&mut self, p: &[u8]) -> Vec<u8> {
@@ -446,7 +455,7 @@ impl App {
             rows.push(Row::Warn("Unknown network".into()));
         }
         rows.push(Row::Text(format!("Site: {}", plain_text(&fields.domain))));
-        rows.push(Row::Kv("Account", format!("Account {}", acct.index + 1)));
+        rows.push(Row::Kv("Account", screen::account_name(acct.index)));
         rows.push(Row::Kv("Network", chain.to_string()));
         match &fields.expiration_time {
             Some(t) => rows.push(Row::Kv("Expires", time_text(t))),

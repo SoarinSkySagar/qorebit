@@ -46,12 +46,12 @@ export const sendMsg = (from, to, amount, denom = "uqor") => ({
 });
 
 /** Unsigned body and auth info: one signer with `publicKey` (33 bytes) at `sequence`. */
-export function buildTx({ messages, memo = "", publicKey, sequence, gas = 500000n, feeUqor }) {
+export function buildTx({ messages, memo = "", publicKey, sequence, gas = 500000n, feeUqor, keyType = "secp256k1" }) {
   const fee = feeUqor ?? ((gas + 9n) / 10n); // 0.1 uqor per gas
   const bodyBytes = TxBody.encode(TxBody.fromPartial({ messages, memo })).finish();
   const authInfoBytes = AuthInfo.encode(AuthInfo.fromPartial({
     signerInfos: [SignerInfo.fromPartial({
-      publicKey: { typeUrl: "/cosmos.crypto.secp256k1.PubKey", value: PubKey.encode({ key: publicKey }).finish() },
+      publicKey: { typeUrl: keyType === "eth_secp256k1" ? "/cosmos.evm.crypto.v1.ethsecp256k1.PubKey" : "/cosmos.crypto.secp256k1.PubKey", value: PubKey.encode({ key: publicKey }).finish() },
       modeInfo: ModeInfo.fromPartial({ single: { mode: SignMode.SIGN_MODE_DIRECT } }),
       sequence: BigInt(sequence),
     })],

@@ -311,6 +311,39 @@ try {
     await expectError("the left button rejects a sign-in", () => call("device.signSiwq", { account: 0, message }), /rejected/);
   }
 
+  // 8e. an EVM-lane (eth-native) account: coin type 60, keccak address, keccak sign digest, the eth_secp256k1 key type
+  {
+    const ethKey = (i) => deriveClassicalKey({ mnemonic: MNEMONIC, index: i, type: "eth_secp256k1" });
+    const ethAddr = (i) => addressFromPublicKey(ethKey(i).publicKey, "eth_secp256k1").bech32;
+    const evm = await call("device.account", { account: 8 });
+    check(evm.bech32 === ethAddr(0) && evm.publicKey === "0x" + toHex(ethKey(0).publicKey), `EVM account 1 matches QoreSign's eth_secp256k1 derivation (${evm.bech32})`);
+    check(evm.bech32 !== me, "the EVM account is a different account from native account 1");
+    const epk = fromHex((await call("device.pqPublicKey", { account: 8 })).publicKey);
+    check(toHex(epk) === toHex(deriveCanonicalPqKey({ mnemonic: MNEMONIC, address: ethAddr(0) }).publicKey), "EVM account 1's ML-DSA-87 key matches QoreSign's");
+    const f2 = await fetch(`http://127.0.0.1:${HTTP}/devnet/fund`, { method: "POST", body: JSON.stringify({ address: evm.bech32, amount: 20_000_000 }) }).then((r) => r.json());
+    check(!f2.error, "the faucet funded the EVM account");
+    // its post-quantum key: the same registration, signed classical-only with the eth_secp256k1 key
+    const ei = await accountInfo(rest, evm.bech32);
+    const pf = await call("device.registerProof", { account: 8, chainId: CHAIN_ID });
+    const rmsg = registerMsg(evm.bech32, epk, ethKey(0).publicKey, fromHex(pf.proof));
+    const rtx = buildTx({ messages: [{ typeUrl: rmsg.typeUrl, value: rmsg.value }], publicKey: ethKey(0).publicKey, sequence: ei.sequence, keyType: "eth_secp256k1" });
+    const rsg = await call("device.signTx", { account: 8, accountNumber: String(ei.accountNumber), chainId: CHAIN_ID, body: toHex(rtx.bodyBytes), authInfo: toHex(rtx.authInfoBytes), classicalOnly: true, signBytes: version });
+    await broadcast(fromHex(rsg.txBytes));
+    check((await fetchPqKeyStatus({ rest, address: evm.bech32 })).registered, "the chain accepted the EVM account's registration (eth_secp256k1 key, keccak signature)");
+    // a hybrid transfer from it
+    const ei2 = await accountInfo(rest, evm.bech32);
+    const ttx = buildTx({ messages: [sendMsg(evm.bech32, you, 1_250_000)], publicKey: ethKey(0).publicKey, sequence: ei2.sequence, keyType: "eth_secp256k1" });
+    const tsg = await call("device.signTx", { account: 8, accountNumber: String(ei2.accountNumber), chainId: CHAIN_ID, body: toHex(ttx.bodyBytes), authInfo: toHex(ttx.authInfoBytes), signBytes: version });
+    const tsoft = signHybrid({ chainId: CHAIN_ID, accountNumber: ei2.accountNumber, bodyBytes: ttx.bodyBytes, authInfoBytes: ttx.authInfoBytes, classicalKey: ethKey(0), pqKey: deriveCanonicalPqKey({ mnemonic: MNEMONIC, address: evm.bech32 }), signBytesVersion: version });
+    check(tsg.txBytes === "0x" + toHex(tsoft.txBytes), "the EVM account's transfer is byte-identical to QoreSign's (keccak digest)");
+    const beforeEvm = await balance(rest, you);
+    await broadcast(fromHex(tsg.txBytes));
+    check((await balance(rest, you)) === beforeEvm + 1_250_000n, "the chain accepted the EVM account's transfer and moved 1.25 QOR");
+    // a transaction with the other lane's key type is refused for this account
+    const wrong = buildTx({ messages: [sendMsg(evm.bech32, you, 1)], publicKey: ethKey(0).publicKey, sequence: ei2.sequence + 1n });
+    await expectError("an EVM account refuses a transaction that names the native key type", () => call("device.signTx", { account: 8, accountNumber: String(ei2.accountNumber), chainId: CHAIN_ID, body: toHex(wrong.bodyBytes), authInfo: toHex(wrong.authInfoBytes), signBytes: version }), /key type/);
+  }
+
   // 9. other networks: the chain id is part of what is signed, and mainnet says so on the screen
   const main = buildTx({ messages: [sendMsg(me, you, 250_000_000)], publicKey: own, sequence: 5n });
   const onMain = await call("device.signTx", { account: 0, accountNumber: "9", chainId: "qorechain-vladi", signBytes: "v2", body: toHex(main.bodyBytes), authInfo: toHex(main.authInfoBytes) });

@@ -93,4 +93,21 @@ for (const [name, fields] of Object.entries(siwqCases)) {
     pqSignatureSha256: hs(Uint8Array.from(Buffer.from(sig.pq.signature, "base64"))),
   };
 }
+
+// EVM-lane (eth-native) accounts: m/44'/60'/0'/0/i, address from keccak, classical signature over keccak256(SignDoc)
+out.evm = { accounts: [], txs: [] };
+for (const index of [0, 1]) {
+  const ck = deriveClassicalKey({ mnemonic, index, type: "eth_secp256k1" });
+  const address = addressFromPublicKey(ck.publicKey, "eth_secp256k1").bech32;
+  const pk = deriveCanonicalPqKey({ mnemonic, address });
+  out.evm.accounts.push({ index, address, classicalPublic: h(ck.publicKey), classicalPrivate: h(ck.privateKey), pqPublicSha256: hs(pk.publicKey) });
+  const ETH_PUBKEY = "/cosmos.evm.crypto.v1.ethsecp256k1.PubKey";
+  const bodyBytes = TxBody.encode(TxBody.fromPartial({ messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: MsgSend.encode(MsgSend.fromPartial({ fromAddress: address, toAddress: to, amount: [{ denom: "uqor", amount: "1234567" }] })).finish() }], memo: "evm" })).finish();
+  const authInfoBytes = AuthInfo.encode(AuthInfo.fromPartial({
+    signerInfos: [SignerInfo.fromPartial({ publicKey: { typeUrl: ETH_PUBKEY, value: PubKey.encode({ key: ck.publicKey }).finish() }, modeInfo: ModeInfo.fromPartial({ single: { mode: SignMode.SIGN_MODE_DIRECT } }), sequence: 3n })],
+    fee: Fee.fromPartial({ amount: [{ denom: "uqor", amount: "50000" }], gasLimit: 500000n }),
+  })).finish();
+  const r = signHybrid({ chainId: "qorechain-diana", accountNumber: 12, bodyBytes, authInfoBytes, classicalKey: ck, pqKey: pk, signBytesVersion: "v2" });
+  out.evm.txs.push({ index, chainId: "qorechain-diana", accountNumber: 12, sequence: 3, bodyBytes: h(bodyBytes), authInfoBytes: h(authInfoBytes), classicalSig: h(r.classicalSignature), pqSigSha256: hs(r.pqSignature), txBytesSha256: hs(r.txBytes) });
+}
 console.log(JSON.stringify(out, null, 1));

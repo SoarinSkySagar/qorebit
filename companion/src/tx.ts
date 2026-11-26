@@ -93,13 +93,20 @@ export function fee(gas: bigint): bigint {
 }
 
 /** The unsigned body and auth info: one signer (`publicKey`, 33 bytes) at `sequence`, SIGN_MODE_DIRECT. */
-export function buildTx(a: { messages: AnyMsg[]; memo?: string; publicKey: Uint8Array; sequence: bigint; gas: bigint }) {
+/** An EVM-lane account (a coin-type-60 key) signs with the `eth_secp256k1` key type: another public-key type in the auth info. */
+export type KeyType = "secp256k1" | "eth_secp256k1";
+export const PUBKEY_TYPE_URL: Record<KeyType, string> = {
+  secp256k1: "/cosmos.crypto.secp256k1.PubKey",
+  eth_secp256k1: "/cosmos.evm.crypto.v1.ethsecp256k1.PubKey",
+};
+
+export function buildTx(a: { messages: AnyMsg[]; memo?: string; publicKey: Uint8Array; sequence: bigint; gas: bigint; keyType?: KeyType }) {
   const body = TxBody.encode(TxBody.fromPartial({ messages: a.messages, memo: a.memo ?? "" })).finish();
   const authInfo = AuthInfo.encode(
     AuthInfo.fromPartial({
       signerInfos: [
         SignerInfo.fromPartial({
-          publicKey: { typeUrl: "/cosmos.crypto.secp256k1.PubKey", value: PubKey.encode({ key: a.publicKey }).finish() },
+          publicKey: { typeUrl: PUBKEY_TYPE_URL[a.keyType ?? "secp256k1"], value: PubKey.encode({ key: a.publicKey }).finish() },
           modeInfo: ModeInfo.fromPartial({ single: { mode: SignMode.SIGN_MODE_DIRECT } }),
           sequence: a.sequence,
         }),

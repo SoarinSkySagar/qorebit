@@ -8,11 +8,14 @@ import {
 import { MultisigCard } from "./Multisig";
 import { TokensCard } from "./Tokens";
 import { SignInCard } from "./SignIn";
+import { CrossVmCard } from "./CrossVm";
+import { qorToEvmHex } from "./crossVmMsg";
 import { DEFAULT_NETWORKS, NETWORK_IDS, type NetworkId, type NetworkInfo } from "./networks";
-import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg } from "./tx";
+import { buildTx, DEFAULT_GAS, fee, formatQor, isQorAddress, parseQor, registerPqKeyMsg, sendMsg, UQOR, type AnyMsg, type KeyType } from "./tx";
 
 const short = (s: string, a = 10, b = 6) => (s.length > a + b + 2 ? `${s.slice(0, a)}…${s.slice(-b)}` : s);
-const ACCOUNTS = 8;
+const ACCOUNTS = 8; // native accounts 1..8; EVM-lane accounts are indices 8..16
+const keyTypeOf = (index: number): KeyType => (index >= ACCOUNTS ? "eth_secp256k1" : "secp256k1");
 
 function saved<T extends string>(key: string, allowed: readonly T[], dflt: T): T {
   try {
@@ -41,8 +44,10 @@ export function App() {
   const [bridge, setBridge] = useState<boolean | null>(null);
   const [security, setSecurity] = useState<Security | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [lastTx, setLastTx] = useState<{ hash: string; at: number } | null>(null);
   const [deviceBusy, setDeviceBusy] = useState(false); // the device is waiting for a button press
   const [acct, setAcct] = useState<DeviceAccount | null>(null);
+  const [acctFor, setAcctFor] = useState(-1); // the account index `acct` belongs to
   const [balance, setBalance] = useState<bigint | null>(null);
   const [chainAcct, setChainAcct] = useState<ChainAccount | null | undefined>(undefined);
   const [pqRegistered, setPqRegistered] = useState<boolean | null>(null);
@@ -97,12 +102,12 @@ export function App() {
   useEffect(() => {
     setAcct(null);
     if (!security) return;
-    device.account(index).then(setAcct, (e) => setDeviceError(explain(e)));
+    device.account(index).then((a) => { setAcct(a); setAcctFor(index); }, (e) => setDeviceError(explain(e)));
   }, [index, security === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the chain's view of it
   const refresh = useCallback(async () => {
-    if (!acct) return;
+    if (!acct || acctFor !== index) return; // right after a switch `acct` is still the previous account
     const mine = generation.current;
     try {
       const [b, a, pq, act] = await Promise.all([
@@ -122,7 +127,7 @@ export function App() {
     } catch (e) {
       if (alive.current && mine === generation.current) setChainError(explain(e));
     }
-  }, [acct, net, index, info.chainId]);
+  }, [acct, acctFor, net, index, info.chainId]);
   useEffect(() => {
     generation.current++;
     setBalance(null);
@@ -159,7 +164,7 @@ export function App() {
       const pk = await device.pqPublicKey(index);
       const classical = fromHex(a.publicKey);
       const msg = registerPqKeyMsg(a.bech32, fromHex(pk.publicKey), classical, fromHex(proof.proof));
-      const { body, authInfo } = buildTx({ messages: [msg], publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS });
+      const { body, authInfo } = buildTx({ messages: [msg], publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS, keyType: keyTypeOf(index) });
       setWait({ what: "Register the key", hint: "The device shows the registration. Press the right button to approve, then your PIN." });
       const signed = await device.signTx({
         account: index, accountNumber: chainAcct.accountNumber, chainId: info.chainId, body: toHex(body), authInfo: toHex(authInfo),
@@ -191,9 +196,9 @@ export function App() {
       const classical = fromHex(a.publicKey);
       const msgs = [sendMsg(a.bech32, to, amount)];
       // gas: simulated by the node (with a placeholder post-quantum layer), then the real fee
-      const probe = buildTx({ messages: msgs, memo, publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS });
+      const probe = buildTx({ messages: msgs, memo, publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS, keyType: keyTypeOf(index) });
       const { gas } = await gasFor(net, probe.body, probe.authInfo);
-      const { body, authInfo } = buildTx({ messages: msgs, memo, publicKey: classical, sequence: chainAcct.sequence, gas });
+      const { body, authInfo } = buildTx({ messages: msgs, memo, publicKey: classical, sequence: chainAcct.sequence, gas, keyType: keyTypeOf(index) });
       if ((balance ?? 0n) < amount + fee(gas)) throw new Error(`not enough QOR: ${formatQor(amount)} plus the fee of ${formatQor(fee(gas))}`);
       setWait({ what: `Send ${formatQor(amount)} QOR`, hint: "Check the device screen: the amount, the address and the network. Right button approves, left button rejects." });
       const signed = await device.signTx({
@@ -227,9 +232,11 @@ export function App() {
       setWait({ what, hint: "Preparing the transaction: checking the network and the fee…" });
       await ensureChain();
       const classical = fromHex(a.publicKey);
-      const probe = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS });
-      const { gas } = await gasFor(net, probe.body, probe.authInfo);
-      const { body, authInfo } = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas });
+      const probe = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas: DEFAULT_GAS, keyType: keyTypeOf(index) });
+      let { gas } = await gasFor(net, probe.body, probe.authInfo);
+      // a cross-VM call runs a second virtual machine: the simulation can fall short, so leave headroom
+      if (msgs.some((m) => String(m.typeUrl).startsWith("/qorechain.crossvm."))) gas = gas * 2n > 1_500_000n ? gas * 2n : 1_500_000n;
+      const { body, authInfo } = buildTx({ messages: msgs, publicKey: classical, sequence: chainAcct.sequence, gas, keyType: keyTypeOf(index) });
       if ((balance ?? 0n) < fee(gas)) throw new Error(`not enough QOR for the network fee of ${formatQor(fee(gas))}`);
       setWait({ what, hint });
       const signed = await device.signTx({
@@ -241,6 +248,7 @@ export function App() {
       if (r.code !== 0) throw new Error(`the chain refused it (code ${r.code}): ${r.log}`);
       const done = await waitForTx(net, r.txhash);
       if (done.code !== 0) throw new Error(`it failed on chain: ${done.rawLog}`);
+      setLastTx({ hash: r.txhash, at: Date.now() });
       setNotice({ tone: "good", text: `${what}: done. Transaction ${short(r.txhash, 10, 8)} in block ${done.height}.` });
       await refresh();
       return true;
@@ -327,6 +335,7 @@ export function App() {
                 <BalanceCard
                   info={info} acct={acct} balance={balance} chainAcct={chainAcct} pqRegistered={pqRegistered} chainError={chainError}
                   onRegister={registerKey} onFaucet={faucet} busy={!!wait}
+                  evmHex={acct && index >= ACCOUNTS ? qorToEvmHex(acct.bech32) : null}
                 />
                 <SendCard disabled={!!wait || !security.pinSet || !pqRegistered || !chainAcct} balance={balance} info={info} onSend={send} why={
                   !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""
@@ -335,6 +344,8 @@ export function App() {
                   why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""} />
                 <SignInCard acct={acct} index={index} chainId={info.chainId} onSign={signIn}
                   why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : ""} />
+                <CrossVmCard net={net} acct={acct} index={index} lastTx={lastTx} onSubmit={submit}
+                  why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""} />
                 <MultisigCard
                   net={net} info={info} acct={acct} onSubmit={submit}
                   why={!!wait ? "Working…" : !security.pinSet ? "Set the signing PIN first." : !chainAcct ? "This account has no funds on this network yet." : !pqRegistered ? "Register the post-quantum key first." : ""}
@@ -418,11 +429,17 @@ function PinSetup({ onSet }: { onSet: () => void }) {
 }
 
 function AccountPicker({ index, onIndex }: { index: number; onIndex: (i: number) => void }) {
+  const evm = index >= ACCOUNTS;
+  const base = evm ? ACCOUNTS : 0;
   return (
     <nav className="accounts" aria-label="Account">
+      <div className="lane" role="radiogroup" aria-label="Account type">
+        <button className={!evm ? "on" : ""} role="radio" aria-checked={!evm} onClick={() => onIndex(index % ACCOUNTS)}>Native</button>
+        <button className={evm ? "on" : ""} role="radio" aria-checked={evm} onClick={() => onIndex(ACCOUNTS + (index % ACCOUNTS))} title="Accounts of the EVM lane: the same identity has a 0x address (MetaMask format) and signs cross-VM calls from the EVM side">EVM</button>
+      </div>
       {Array.from({ length: ACCOUNTS }, (_, i) => (
-        <button key={i} className={i === index ? "on" : ""} onClick={() => onIndex(i)} aria-pressed={i === index}>
-          Account {i + 1}
+        <button key={i} className={base + i === index ? "on" : ""} onClick={() => onIndex(base + i)} aria-pressed={base + i === index}>
+          {evm ? "EVM" : "Account"} {i + 1}
         </button>
       ))}
     </nav>
@@ -440,7 +457,7 @@ function Copy({ text, label = "Copy" }: { text: string; label?: string }) {
 
 function BalanceCard(p: {
   info: NetworkInfo; acct: DeviceAccount | null; balance: bigint | null; chainAcct: ChainAccount | null | undefined; pqRegistered: boolean | null;
-  chainError: string | null; onRegister: () => void; onFaucet: () => void; busy: boolean;
+  chainError: string | null; onRegister: () => void; onFaucet: () => void; busy: boolean; evmHex?: string | null;
 }) {
   const groups = p.acct ? p.acct.bech32.match(/.{1,4}/g)! : [];
   return (
@@ -453,8 +470,10 @@ function BalanceCard(p: {
       <div className="address mono" aria-label={p.acct?.bech32}>
         {groups.map((g, i) => <span key={i} className={i % 2 ? "alt" : ""}>{g}</span>)}
       </div>
+      {p.evmHex && <div className="muted small mono break">EVM address: {p.evmHex} <span className="sans">(the same account, in the format MetaMask uses)</span></div>}
       <div className="row">
         {p.acct && <Copy text={p.acct.bech32} label="Copy address" />}
+        {p.acct && p.evmHex && <Copy text={p.evmHex} label="Copy 0x address" />}
         <span className={`pill ${p.pqRegistered ? "good" : p.pqRegistered === false ? "warn" : ""}`}>
           {p.pqRegistered === null ? "post-quantum key: …" : p.pqRegistered ? "post-quantum key registered" : "post-quantum key not registered"}
         </span>

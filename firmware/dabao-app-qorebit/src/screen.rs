@@ -289,6 +289,15 @@ fn text_w(s: &str, font: &MonoFont) -> i32 {
     s.chars().count() as i32 * (font.character_size.width + font.character_spacing) as i32
 }
 
+/// "Account 3" for a native account (0..8), "EVM account 3" for an EVM-lane one (8..16).
+pub fn account_name(index: u32) -> String {
+    if index < 8 {
+        format!("Account {}", index + 1)
+    } else {
+        format!("EVM account {}", index - 7)
+    }
+}
+
 fn navbar(f: &mut Frame, tag: &str) {
     fill(f, 0, 0, WIDTH as i32, NAV_H, WHITE);
     // the name in a large font, drawn twice one pixel apart so it reads bold
@@ -473,7 +482,7 @@ fn fit_seg(s: &str, max_w: i32, sizes: &[i32]) -> Seg {
 fn idle(f: &mut Frame, account: u32, home: &Home, trust: crate::security::Trust, passphrase: bool) {
     navbar(f, "");
     // accounts are numbered from 1, as in the companion app
-    text_at(f, &format!("Account {}", account + 1), &FONT_8X13, MUTED, M, 48, Alignment::Left);
+    text_at(f, &account_name(account), &FONT_8X13, MUTED, M, 48, Alignment::Left);
     if !home.network.is_empty() {
         let c = if home.network == MAINNET { AMBER } else { MUTED };
         text_at(f, &home.network, &FONT_8X13, c, WIDTH as i32 - M, 48, Alignment::Right);
@@ -919,6 +928,7 @@ mod tests {
         };
         let shots = [
             ("16-send-to-a-long-address", Screen::Approval(to_msig), 55),
+            ("20-cross-vm", Screen::Approval(Approval { tag: "CROSS-VM", heading: "Cross-VM call", big: None, rows: vec![Row::Kv("Action", "Call a contract".into()), Row::Warn("Details: see website".into()), Row::Kv("Size / id", "212 bytes / 4c1d02aa".into()), Row::Kv("From", "EVM account 1".into()), Row::Kv("Max fee", "0.1 QOR".into()), Row::Kv("Network", "qorechain-diana".into())] }), 55),
             ("19-sign-in", Screen::Approval(Approval { tag: "SIGN IN", heading: "Sign in to a website", big: None, rows: vec![Row::Text("Site: app.example.com".into()), Row::Kv("Account", "Account 1".into()), Row::Kv("Network", "qorechain-diana".into()), Row::Kv("Expires", "2026-11-26 10:10 UTC".into()), Row::Text("Sign in to Example and read your profile".into())] }), 55),
             ("18-send-token", Screen::Approval(Approval { tag: "SEND", heading: "Send", big: None, rows: vec![
                 Row::Addr("To", "qor19ltfv6u4sfx6hz0veu6p80r69pleufhmvn2zmk".to_string()),
