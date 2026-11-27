@@ -19,7 +19,14 @@ wrapped blob in keystore application slots 322/323 (320/321 are the plain-seed s
 record is in 324/325 and its attempt count on one-way counter 233 (Quazar: 300..=305 and 232, so one board can hold
 either). The emulator keeps both in a host file (`QOREBIT_STATE`, default `target/qorebit-state.bin`).
 
-**Accounts:** up to 8 from the one seed, derived on demand (`BIP-32 m/44'/118'/0'/0/i`, and the account's ML-DSA key).
+**Accounts:** 16 from the one seed, derived on demand: 0..8 native (`BIP-32 m/44'/118'/0'/0/i`, sha256 digest) and 8..16 EVM lane
+(`m/44'/60'/0'/0/i`, keccak256 digest, `eth_secp256k1`), each with its own ML-DSA key from the account's address. `check` refuses a
+transaction whose key type is not the account's.
+
+**Other commands:** `SIGN_SIWQ` (0x07, Sign In With QoreChain, strict parse, this account only). Multisig, Cross-VM and smart-account messages
+are labelled MULTISIG / CROSS-VM / SMART ACCT on the screen and signed without decoding their fields (`Msg::Other`).
+
+**Size:** the app image must fit the Dabao's 893,696-byte app region; `build.sh` fails above it (a larger image flashes but never starts).
 
 **Build:** `./build.sh emu` (host binary for `cargo xtask dabao-emu`), `./build.sh device` (riscv binary and
 `loader/xous/apps.uf2` in xous-core's target dir). Options `--vdisplay[=false]`, `--panel`, `--panel-udma`; use

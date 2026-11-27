@@ -4,6 +4,9 @@ Qorebit is a hardware wallet for QoreChain with **two buttons**. You do not need
 **emulator** with the device's screen drawn in a window on your computer. If you do have a Baochip Dabao board, sections
 7 and 8 flash it. An agent can do all of this for you: run **`/setup`** in Claude Code (see section 10).
 
+**Reviewing it for the QoreChain fest?** The five minute path: `make setup-emu`, `make demo`, then section 5 (PIN, faucet, register the key, send,
+reject) and `make test-emu` in section 9. What the fest asks for and how Qorebit answers it: [SUBMISSION.md](SUBMISSION.md); the video script: [DEMO.md](DEMO.md).
+
 Tested on Linux x86-64. The emulator and website also run on macOS (the local devnet node is Linux-only; use the
 Testnet tab there).
 
@@ -68,66 +71,6 @@ Switch in the header. All three go through the bridge (QoreChain's public endpoi
 | Mainnet | `qorechain-vladi` | real funds; an amber banner and **MAINNET** on the device screen. Read-only unless you fund it |
 | Testnet | `qorechain-diana` | test QOR from QoreChain's faucet |
 | Local devnet | `qorechain-local` | `make devnet`; one-click faucet |
-
-## 6b. The browser extension (side panel)
-
-The same wallet also runs as a Chrome / Brave / Edge extension: the toolbar button opens it in the browser's side panel,
-next to whatever page you are on. It is the companion app built for the panel; it has no other powers than the website.
-
-```bash
-make extension        # builds extension/dist
-```
-
-Then open `chrome://extensions`, switch on **Developer mode**, click **Load unpacked** and choose `extension/dist`.
-Start the bridge as usual (`make demo`, `make web-emu` or `make board-virtual`), then click the Qorebit button in the
-toolbar. Chrome 114 or newer is needed (side panel).
-
-What it can do: talk to the local bridge (`http://127.0.0.1:7630`) and keep the selected account in its own storage. It reads
-nothing from pages. Two tiny scripts run on web pages only to offer them `window.qorechain` (below); `make test` checks the manifest.
-The bridge accepts the extension by its fixed id (`extension/EXTENSION_ID`, pinned by the key in `extension/manifest.json`), not by a
-pattern, so another extension cannot use the device. Approval of every transaction still happens on the device.
-
-**Firefox.** `make extension-firefox` builds `extension/dist-firefox`. Open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**,
-and choose `extension/dist-firefox/manifest.json` (Firefox 128 or newer; it opens as a sidebar, the toolbar button toggles it, and a temporary
-add-on is removed when Firefox closes; `STORE.md` covers a signed, permanent install). Firefox gives every install its own address, so the first
-time the wallet says "the bridge does not know this wallet yet" and shows a command: start the bridge with it,
-`QOREBIT_EXTENSION_ORIGINS=moz-extension://<id> make board-panel`.
-
-**The password lock.** The first time you open the extension it asks you to create a password (at least 8 characters, with a strength
-bar). After that it opens on the password field with the keyboard already in it: type and press Enter. Once unlocked it stays open for the
-browser session (the side panel and the approval window share it; closing the browser locks it again). The lock icon at the top locks it
-now; **Device → Wallet password** changes or removes the password. Five wrong tries start a growing wait. The password only locks the
-wallet's pages in your browser: the keys are on the device, behind its PIN. If you forget it, remove the extension and load it again
-(nothing is lost). The website has no password lock.
-
-**The wallet's screens** (the website is the same): the account menu (Native 1..8, EVM 1..8) and the network menu are at the top;
-**Home** (balance, Send, Receive, Tokens, recent activity), **Activity**, **Apps** (Sign in with QoreChain, Multisig, Smart account,
-Cross-VM calls, each its own screen) and **Device** (PIN, recovery words, passphrase, restore, erase) are in the bar at the bottom.
-
-**Websites: Sign In With QoreChain without pasting.** A page can call `window.qorechain`:
-
-```js
-const [address] = await window.qorechain.request({ method: "qor_requestAccounts" });   // asks you to connect the site
-const chainId   = await window.qorechain.request({ method: "qor_chainId" });
-const signature = await window.qorechain.request({ method: "qor_signIn", params: [{ message }] }); // SIWQ, signed on the device
-const { hash, height } = await window.qorechain.request({   // a transaction, signed on the device and sent by the wallet
-  method: "qor_sendTransaction",
-  params: [{ messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: { toAddress: "qor1…", amount: [{ denom: "uqor", amount: "100000" }] } }], memo: "order 42" }],
-});
-```
-
-**Sending a transaction from a site.** `qor_sendTransaction` takes exactly one message (the device signs one per transaction): a send as
-`{ toAddress, amount }` (the wallet fills in your account), or any message as `{ typeUrl, value: "<base64 protobuf>" }`. The Qorebit window
-shows the site, the amount and recipient (sends and staking are decoded; other types show their type and bytes with a warning), the memo,
-the network and the fee, and checks that the account exists, its post-quantum key is registered and the balance covers it. On Approve the device
-shows the transaction itself and asks for the button and PIN; the wallet then sends it and answers the site with `{ hash, height }` once it is
-in a block, or an error (code 4001 if you reject, on the window or on the device). The site must be connected first. To try it,
-run `make demo-site` and open http://localhost:8080 with the extension installed: **Sign in with QoreChain** connects the site and signs a real sign-in message on the device (the page builds the message the way `createSiwqMessage` does), then **Send with the wallet** asks for a transaction.
-
-`qor_requestAccounts` opens a small Qorebit window ("Connect to this site?"). `qor_signIn` opens the same window with the site and the
-statement, then the device asks for its button and your PIN. The wallet refuses a message whose site is not the requesting site, one for
-another account, and anything the device cannot show in full. The returned object is the SIWQ signature (`ml-dsa-87-hybrid`) that
-`verifySiwq` from `@qorechain/qoresign` checks. Sign-in uses native accounts. Without the extension, the **Sign in** app still takes a pasted message.
 
 ## 6a. Sign in with QoreChain
 
@@ -197,6 +140,66 @@ The **Smart account** card creates a smart account (session based, multisig or s
 transaction and per day in QOR, which coins may move, and which EVM calls are allowed (at most 5 rules). Both are signed on the board, which
 shows SMART ACCT. The rules limit linked keys and relayers; they do not limit what you send yourself. Mainnet has smart accounts switched off.
 
+## 6f. The browser extension (side panel) and websites
+
+The same wallet also runs as a Chrome / Brave / Edge extension: the toolbar button opens it in the browser's side panel,
+next to whatever page you are on. It is the companion app built for the panel; it has no other powers than the website.
+
+```bash
+make extension        # builds extension/dist
+```
+
+Then open `chrome://extensions`, switch on **Developer mode**, click **Load unpacked** and choose `extension/dist`.
+Start the bridge as usual (`make demo`, `make web-emu` or `make board-virtual`), then click the Qorebit button in the
+toolbar. Chrome 114 or newer is needed (side panel).
+
+What it can do: talk to the local bridge (`http://127.0.0.1:7630`) and keep the selected account in its own storage. It reads
+nothing from pages. Two tiny scripts run on web pages only to offer them `window.qorechain` (below); `make test` checks the manifest.
+The bridge accepts the extension by its fixed id (`extension/EXTENSION_ID`, pinned by the key in `extension/manifest.json`), not by a
+pattern, so another extension cannot use the device. Approval of every transaction still happens on the device.
+
+**Firefox.** `make extension-firefox` builds `extension/dist-firefox`. Open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**,
+and choose `extension/dist-firefox/manifest.json` (Firefox 128 or newer; it opens as a sidebar, the toolbar button toggles it, and a temporary
+add-on is removed when Firefox closes; `STORE.md` covers a signed, permanent install). Firefox gives every install its own address, so the first
+time the wallet says "the bridge does not know this wallet yet" and shows a command: start the bridge with it,
+`QOREBIT_EXTENSION_ORIGINS=moz-extension://<id> make board-panel`.
+
+**The password lock.** The first time you open the extension it asks you to create a password (at least 8 characters, with a strength
+bar). After that it opens on the password field with the keyboard already in it: type and press Enter. Once unlocked it stays open for the
+browser session (the side panel and the approval window share it; closing the browser locks it again). The lock icon at the top locks it
+now; **Device → Wallet password** changes or removes the password. Five wrong tries start a growing wait. The password only locks the
+wallet's pages in your browser: the keys are on the device, behind its PIN. If you forget it, remove the extension and load it again
+(nothing is lost). The website has no password lock.
+
+**The wallet's screens** (the website is the same): the account menu (Native 1..8, EVM 1..8) and the network menu are at the top;
+**Home** (balance, Send, Receive, Tokens, recent activity), **Activity**, **Apps** (Sign in with QoreChain, Multisig, Smart account,
+Cross-VM calls, each its own screen) and **Device** (PIN, recovery words, passphrase, restore, erase) are in the bar at the bottom.
+
+**Websites: Sign In With QoreChain without pasting.** A page can call `window.qorechain`:
+
+```js
+const [address] = await window.qorechain.request({ method: "qor_requestAccounts" });   // asks you to connect the site
+const chainId   = await window.qorechain.request({ method: "qor_chainId" });
+const signature = await window.qorechain.request({ method: "qor_signIn", params: [{ message }] }); // SIWQ, signed on the device
+const { hash, height } = await window.qorechain.request({   // a transaction, signed on the device and sent by the wallet
+  method: "qor_sendTransaction",
+  params: [{ messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: { toAddress: "qor1…", amount: [{ denom: "uqor", amount: "100000" }] } }], memo: "order 42" }],
+});
+```
+
+**Sending a transaction from a site.** `qor_sendTransaction` takes exactly one message (the device signs one per transaction): a send as
+`{ toAddress, amount }` (the wallet fills in your account), or any message as `{ typeUrl, value: "<base64 protobuf>" }`. The Qorebit window
+shows the site, the amount and recipient (sends and staking are decoded; other types show their type and bytes with a warning), the memo,
+the network and the fee, and checks that the account exists, its post-quantum key is registered and the balance covers it. On Approve the device
+shows the transaction itself and asks for the button and PIN; the wallet then sends it and answers the site with `{ hash, height }` once it is
+in a block, or an error (code 4001 if you reject, on the window or on the device). The site must be connected first. To try it,
+run `make demo-site` and open http://localhost:8080 with the extension installed: **Sign in with QoreChain** connects the site and signs a real sign-in message on the device (the page builds the message the way `createSiwqMessage` does), then **Send with the wallet** asks for a transaction.
+
+`qor_requestAccounts` opens a small Qorebit window ("Connect to this site?"). `qor_signIn` opens the same window with the site and the
+statement, then the device asks for its button and your PIN. The wallet refuses a message whose site is not the requesting site, one for
+another account, and anything the device cannot show in full. The returned object is the SIWQ signature (`ml-dsa-87-hybrid`) that
+`verifySiwq` from `@qorechain/qoresign` checks. Sign-in uses native accounts. Without the extension, the **Sign in** app still takes a pasted message.
+
 ## 7. With a Dabao board and the display on your laptop (virtual display)
 
 The board does the cryptography and keeps the keys; the screen and button are the window on your laptop (a development
@@ -206,6 +209,8 @@ stand-in: malware on the laptop could fake them).
 make flash-virtual    # build + flash. When asked: unplug the Dabao, hold PROG, plug it back in
 make board-virtual    # the window + website (re-run this any time; no reflash needed)
 ```
+
+The board is open hardware around a verifiable chip (README, "Open hardware and a verifiable chip"): with it in its bootloader, `make audit` hashes its boot code and compares it with Baochip's published hashes (read-only).
 
 The board's PROG button only enters the bootloader. If `make flash-virtual` says the board is not in its bootloader,
 repeat the plug-in with PROG held. `make security` shows the chip's state; `make info` its firmware.
@@ -219,7 +224,7 @@ make flash-panel      # builds the panel firmware (screen and button stay on the
 make board-panel      # the bridge and website only
 ```
 
-`make bio-test` checks the display and button engines without the panel. The panel path has not been run on hardware yet.
+`make bio-test` checks the display and button engines without the panel. The panel build is the least tested path; signing itself has been run on a board (testnet transfers, Cross-VM, smart accounts).
 
 ## 9. Checks you can run
 
@@ -230,8 +235,9 @@ make screens          # every device screen as an image, in screens/
 make stack            # how much memory the post-quantum signing needs
 ```
 
-`make test-emu` prints 28 `ok` lines: key registration, transfers, left rejects and right approves, a wrong PIN,
-and the transactions the device must refuse.
+`make test-emu` prints 58 `ok` lines: key registration, transfers, left rejects and right approves, a wrong PIN,
+the transactions the device must refuse, EVM-lane keys, tokens, multisig, smart accounts and Sign In With QoreChain. A real
+QoreChain node (the local devnet) verifies every signature the firmware makes.
 
 ## 10. Set it up with an agent
 
@@ -253,6 +259,10 @@ the local chain, runs the emulator with its window and the website, and stops at
 | `SemVer::from_git: no major version` while flashing | `make submodules` fetches the tags the image signer needs |
 | the board stays in its bootloader | `make boot`, or press PROG |
 | PIN locked | *Forgot PIN* in the website's Device card: enter your 24 words on the device |
+| Firefox extension: *the bridge does not know this wallet* or *No device answers* | Firefox gives each install its own address: start the bridge with the command the wallet shows, `QOREBIT_EXTENSION_ORIGINS=moz-extension://<id> make board-panel` |
+| the demo site says *nothing to approve* | reload the extension (it must be the current build: `make extension`), then connect again |
+| the extension asks for a password | the password you set in the extension (the keys are on the device); closing the browser locks it again |
+| the board never starts after a flash | the app image is over the board's 893,696-byte limit (`build.sh` fails above it), or boot wait is off: `make boot` |
 
 ## 12. Stopping and resetting
 

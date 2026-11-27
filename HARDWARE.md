@@ -1,6 +1,6 @@
 # Hardware: pin connections and board bring-up
 
-Qorebit runs on the **Baochip-1x Dabao** board. There are two ways to use it, and only the second needs any wiring.
+Qorebit runs on the **Baochip-1x Dabao** board: open-source hardware (the board's KiCad files and the chip's RTL are CERN-OHL-W-2.0, `github.com/baochip/dabao` and `github.com/baochip/baochip-1x`) around a chip designed to be verified (README, "Open hardware and a verifiable chip"). To check your own board's boot code against Baochip's published hashes, put it in its bootloader and run `make audit` (read-only). There are two ways to use it, and only the second needs any wiring.
 
 | Mode | Screen | Button | Wiring |
 |---|---|---|---|
@@ -68,7 +68,7 @@ Do these in order. Each step checks one thing, so a failure points at one cause.
    (left rejects, right approves). `make info` shows the firmware and `make security` the chip state.
 2. **Signing memory.** In the website, set the PIN, register the post-quantum key and send once. This is the first time
    ML-DSA-87 (about 350 KiB of stack, in a 416 KiB thread) runs on the real 2 MiB chip. If it fails or the board resets
-   here, tell us: it is the main unverified risk.
+   here, tell us. (It has worked on the author's board.)
 3. **Display and button engines without the panel:**
    ```bash
    make bio-test
@@ -84,4 +84,5 @@ Do these in order. Each step checks one thing, so a failure points at one cause.
 Blank display: check VCC/GND, then RES and BLK, then lower the clock. Wrong colours or a shifted image: check DC and
 CS. Button does nothing: check PB1 to GND with a meter (it should read low when pressed).
 
-The panel build has been seen running on a board (home screen with the address). Signing on the chip is still to be tested.
+The panel build has been seen running on a board (home screen with the address). Signing on the chip has been run (testnet transfers, Cross-VM,
+smart accounts); the panel's own display and the PB1 / PB2 buttons are the least tested part, so report what you see.

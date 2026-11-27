@@ -18,7 +18,7 @@ emulator and flashing; the chain, the signature scheme and the input are Qorebit
 ```bash
 make test                 # signer (vs QoreSign), firmware, companion unit tests; no devnet needed
 make devnet               # fetch the node release (sha256 checked) + start a fresh local chain
-make test-emu             # firmware in the emulator + the devnet: the chain verifies the device's signatures
+make test-emu             # firmware in the emulator + the devnet: the chain verifies the device's signatures (58 checks)
 make web-emu              # emulator + bridge + device window + website (http://localhost:5173)
 make firmware-device      # board images (loader/xous/apps.uf2); make flash to flash
 make stack                # ML-DSA-87 stack need (the firmware gives signing 416 KiB)
@@ -112,7 +112,7 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   `content.js` (relay; the site comes from the browser's `sender.origin`), `background.js` (connections in `chrome.storage.local`, one waiting request
   per site, an approval popup `index.html#/approve/<id>` rendered by `Approve.tsx`). The wallet writes `qorebit.state` (selected account, chain) to
   extension storage for it. `tools/test-extension-provider.mjs` tests the background against a mocked `chrome`; `check-extension.mjs` pins the
-  permissions (`sidePanel`, `storage`) and the two content scripts. Not tried in a real Chrome yet.
+  permissions (`sidePanel`, `storage`) and the two content scripts. Not tried in a real Chrome by the author yet (the Firefox build was).
 
 - Password lock (extension only): `lock.ts` (PBKDF2-SHA-256, 600k rounds, salted hash in `chrome.storage.local`; the unlocked flag in
   `chrome.storage.session`, so it lasts until the browser closes; wrong-try throttle), `LockScreen.tsx` (`LockGate` wraps the wallet and the
@@ -122,11 +122,31 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   pages the content scripts run on); `make extension-firefox` -> `extension/dist-firefox`; scripts use `browser ?? chrome` (`companion/src/ext.ts`).
   Its origin is a random `moz-extension://uuid`: the bridge takes exact origins from `extension/EXTENSION_ID` (one id per line, add the Chrome Web Store
   id) and `QOREBIT_EXTENSION_ORIGINS`; the app shows the command when the bridge answers 403. `make extension-zip` -> store zips (`STORE.md`). `web-ext lint`
-  passes (0 errors; 2 innerHTML warnings are React's). Not run in a real Firefox yet.
+  passes (0 errors; 2 innerHTML warnings are React's). The author ran it in a real Firefox (temporary add-on) against a board, after allowing its `moz-extension://` origin in the bridge.
 
 - `qor_sendTransaction` (one message; `siteTx.ts` validates and describes it, `Approve.tsx::SendTx` checks the chain, shows the fee, the device signs, the wallet
   broadcasts and waits; same pipeline as `App.submit`, duplicated on purpose to keep the approval window self-contained). `extension/demo/` is a test page.
-  Parsing and the background rules are tested; the whole flow (extension -> board -> chain) has not been run in a real browser yet.
+  Parsing and the background rules are tested; the whole flow (demo page -> extension -> board -> chain: connect, Sign In With QoreChain, send) was run by the author in a real browser.
+
+## Open hardware, verifiable chip (a headline feature: keep it in the docs)
+
+- Baochip-1x RTL and the Dabao KiCad design are CERN-OHL-W-2.0; Xous is Rust; this repo is MIT. The chip is "mostly open" (closed: bus fabric, analog IP, self-test
+  details, pads) and designed for IRIS inspection; `make audit` (`tools/audit.py`) checks boot0/boot1 hashes only. Say "to our knowledge, possibly the first
+  post-quantum hardware wallet on open-source, verifiable hardware": never state it as fact or claim the silicon was inspected. Text lives in README ("Open
+  hardware and a verifiable chip"), SUBMISSION.md, HARDWARE.md.
+
+## The fest this is entered in (QoreChain "Build Before Q-Day", build.qorechain.io)
+
+- Read `SUBMISSION.md` first: criteria, category analysis, form text, checklist. `DEMO.md` = 3 minute video script, `PROOF.md` = testnet
+  hashes (fill from real transactions only), `AI_USAGE.md` = the Best AI-Native Build log. Re-read build.qorechain.io `/rules`, `/prizes`,
+  `/faq` before editing them: the organisers may change them (last read 27 Nov 2026).
+- Deadline **2 Dec 2026 23:59 UTC**; no submit button, the project form is the submission. Judging: works as described 25%, QoreChain tech
+  verified in the repo and on chain 25%, post-quantum correctness 20%, originality 15%, clarity / UX / docs 15%.
+- Required: public repo with MIT / Apache-2.0 licence and README, a video up to 3 minutes, testnet `qor1…` addresses, honest kit and feature
+  ticks (kits from dependency files, features from transactions of the listed addresses), libraries credited in the README, only commits
+  from 4 Nov. Category: **Quantum Pass** (decided by the author, 27 Nov); `create-qorechain-dapp` is not used, which is the open question.
+- Keep claims verifiable: do not write a transaction hash, address, test count or "verified on hardware" that was not seen. Keep README
+  "Honest status", `AI_USAGE.md` and `SUBMISSION.md` section 7 in step with the code when a feature lands.
 
 ## Rules
 

@@ -1,7 +1,7 @@
 ---
 name: setup
-description: Get the Qorebit wallet ready end to end. Starts the local QoreChain devnet (or reuses a running one), builds and flashes the firmware to the Dabao board (or uses the emulator), and starts the bridge, the device window and the wallet website, leaving everything waiting for the user to set the signing PIN in the website. Use when the user runs /setup or asks to set up, prepare or start the wallet or the demo.
-argument-hint: "[emu] [fresh] [nodevnet]"
+description: Get the Qorebit wallet ready end to end. Starts the local QoreChain devnet (or reuses a running one), builds and flashes the firmware to the Dabao board (or uses the emulator), and starts the bridge, the device window and the wallet website, leaving everything waiting for the user to set the signing PIN in the website. Can also build the Chrome / Firefox extension and serve the demo website for `window.qorechain`. Use when the user runs /setup or asks to set up, prepare or start the wallet or the demo.
+argument-hint: "[emu|board|panel] [fresh] [nodevnet] [extension] [demo-site]"
 ---
 
 # /setup: the Qorebit wallet, ready to use
@@ -16,8 +16,11 @@ Arguments (optional, any order). **Default: the emulator** (anyone can run it, n
 - `panel`: a Dabao with its own ST7789 panel + button (no window): `make flash-panel`, then `make board-panel`.
 - `fresh`: restart the devnet from a new chain even if one is running (wipes its state).
 - `nodevnet`: skip the local devnet (the website's testnet and mainnet need nothing local).
+- `extension`: also build the browser extensions (step 6): `make extension` (Chrome, Brave, Edge) and `make extension-firefox`.
+- `demo-site`: also serve the demo website for sites (`window.qorechain`: Sign In With QoreChain, send) on http://localhost:8080.
 
-The human-readable version of these steps is `walkthrough.md`: point the user to it.
+The human-readable version of these steps is `walkthrough.md`: point the user to it. For the QoreChain fest (what is judged, the video
+script, the checklist) point to `SUBMISSION.md` and `DEMO.md`; this skill does not edit them.
 
 Track the steps with a task list and tell the user in one line what each step is doing. Long builds take
 minutes: run them in the background and wait for them to finish rather than polling.
@@ -27,7 +30,7 @@ minutes: run them in the background and wait for them to finish rather than poll
 - Never run `make harden`, `make devnet-up` over a chain the user wants to keep (only with `fresh`), `make emu-reset`,
   `make clean`, or anything that changes one-way counters or deletes data, unless the user asks for it by name.
 - Stop processes only by PID or process group, never with broad `pkill -f` patterns.
-- Don't commit, push or edit project files: this skill only builds and runs.
+- Don't commit, push or edit project files: this skill only builds and runs (it writes build outputs such as `extension/dist`).
 - Never send anything to mainnet or the testnet: setup only reads from them.
 - If a step fails, show the last lines of its output, say what it means and stop; don't guess around it.
 
@@ -56,7 +59,7 @@ Note the endpoints from `make devnet-info` for the summary.
 
 ## 3. Nothing else running
 
-`make web` / `make web-emu` refuse to start when their ports are taken: `ss -ltn | grep -E ':(7610|7620|7630|5173) '`.
+`make web` / `make web-emu` refuse to start when their ports are taken: `ss -ltn | grep -E ':(7610|7620|7630|5173|8080) '`.
 If something holds them, tell the user what (`ss -ltnp`) and ask before stopping it; stop a stack this session
 started earlier by its process group.
 
@@ -90,7 +93,17 @@ curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5173/   # the web
 make security                               # the chip, the seed storage, PIN set or not
 ```
 
-## 6. Hand over
+## 6. Extensions and demo site (only with `extension` or `demo-site`)
+
+- `extension`: `make extension` builds `extension/dist`; `make extension-firefox` builds `extension/dist-firefox`. Loading them is the
+  user's step (a browser's own UI): Chrome / Brave / Edge: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`
+  (Chrome 114+); Firefox: `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `extension/dist-firefox/manifest.json`.
+  Firefox gives each install its own `moz-extension://<id>`: the wallet then says the bridge does not know it and shows the command. Restart
+  the stack with `QOREBIT_EXTENSION_ORIGINS=moz-extension://<id>` (stop it by process group first, and tell the user).
+- `demo-site`: `make demo-site` in the background (a static server on :8080); check with `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/`.
+  Tell the user to open it with the extension loaded: **Sign in with QoreChain** connects and signs on the device, then *Send*.
+
+## 7. Hand over
 
 Tell the user, briefly:
 - The wallet website: http://localhost:5173. The device window is open on this computer; its **two buttons**: the
@@ -98,5 +111,9 @@ Tell the user, briefly:
 - Next in the website: **Set the PIN on the device** (eight presses, left = 0, right = 1, then again), choose the
   network (devnet / testnet / mainnet), get funds (devnet: the faucet button; testnet: QoreChain's faucet link),
   **register the post-quantum key** once, then send.
+- The two buttons are labelled REJECT (left) and APPROVE (right); they stay dim until the device asks for an answer.
 - The devnet endpoints (REST :1317, RPC :26657, chain id `qorechain-local`).
+- To check the signing end to end: `make test-emu` (58 checks, a real node verifies the device's signatures; needs the devnet), `make test`
+  for the unit suites. Apps in the website: Sign in with QoreChain, Multisig, Smart account, Cross-VM calls; EVM accounts are in the account menu.
+- With `extension` / `demo-site`: where the extension is built, how to load it, and http://localhost:8080.
 - How to stop: Ctrl+C in the stack's terminal; `make devnet-down` stops the devnet.
