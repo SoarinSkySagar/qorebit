@@ -384,7 +384,7 @@ export function App() {
                 />
                 <ChainStatusCard net={net} address={acct?.bech32 ?? null} />
                 <div className="recent-head"><h2>Recent activity</h2><button className="linkbtn" onClick={() => go("activity")}>See all</button></div>
-                <ActivityCard activity={activity?.slice(0, 4) ?? null} bare />
+                <ActivityCard activity={activity?.slice(0, 4) ?? null} explorer={info.explorer} bare />
               </>
             )}
             {view === "send" && (
@@ -410,7 +410,7 @@ export function App() {
             {view === "activity" && (
               <>
                 <ScreenHead title="Activity" />
-                <ActivityCard activity={activity} />
+                <ActivityCard activity={activity} explorer={info.explorer} />
               </>
             )}
             {view === "apps" && (
@@ -630,7 +630,12 @@ function SendCard(p: { disabled: boolean; why: string; balance: bigint | null; i
   );
 }
 
-function ActivityCard({ activity, bare }: { activity: Activity[] | null; bare?: boolean }) {
+/** The explorer page of a transaction (the same shape as the SDK's explorerTxUrl), or null on a network with no explorer. */
+function txUrl(explorer: string | null, hash: string): string | null {
+  return explorer ? `${explorer.replace(/\/+$/, "")}/tx/${hash}` : null;
+}
+
+function ActivityCard({ activity, explorer, bare }: { activity: Activity[] | null; explorer: string | null; bare?: boolean }) {
   return (
     <section className="card">
       {!bare && <h2>Activity</h2>}
@@ -643,7 +648,10 @@ function ActivityCard({ activity, bare }: { activity: Activity[] | null; bare?: 
             <span className="what">
               <b>{a.kind === "sent" ? "Sent" : a.kind === "received" ? "Received" : "Transaction"}</b>
               {a.peer && <span className="muted mono small"> {a.kind === "sent" ? "to" : "from"} {short(a.peer, 8, 6)}</span>}
-              <span className="muted mono small block">{short(a.hash, 8, 6)} · block {a.height}{a.ok ? "" : " · failed"}</span>
+              <span className="muted mono small block">
+                {short(a.hash, 8, 6)} · block {a.height}{a.ok ? "" : " · failed"}
+                {txUrl(explorer, a.hash) && <> · <a className="txlink" href={txUrl(explorer, a.hash)!} target="_blank" rel="noreferrer noopener" title="Open this transaction in the explorer">explorer ↗</a></>}
+              </span>
             </span>
             <span className={`amt mono ${a.kind}`}>{a.amount !== null ? `${a.kind === "sent" ? "−" : a.kind === "received" ? "+" : ""}${formatQor(a.amount, 4)}` : ""}</span>
           </li>

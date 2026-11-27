@@ -62,3 +62,27 @@ $("send").onclick = async () => {
     show(result);
   } catch (e) { fail(e); }
 };
+
+// ---- QoreX: the same site, a different wallet. QoreX injects window.qorex (never window.keplr). signArbitrary signs a message with the account's
+// classical key (ADR-36) and with ML-DSA-87; a server verifies both with verifyMessageWithChain from @qorechain/qoresign. This page only shows it.
+const QOREX_CHAIN = "qorechain-diana";
+const qorex = () => (typeof window.qorex?.native?.signArbitrary === "function" ? window.qorex.native : null);
+function qorexReady() {
+  $("qorex-status").textContent = qorex() ? "QoreX found." : "QoreX not found: install the QoreX extension and reload this page.";
+  $("qorex-signin").disabled = !qorex();
+}
+qorexReady();
+for (const ms of [300, 900, 2000, 4000]) setTimeout(qorexReady, ms);
+
+$("qorex-signin").onclick = async () => {
+  try {
+    const native = qorex();
+    if (!native) throw new Error("QoreX not found");
+    await native.enable(QOREX_CHAIN); // one approval per site: it only reveals the public address
+    const { bech32Address } = await native.getKey(QOREX_CHAIN);
+    const message = `Sign in to the Qorebit demo site (${location.host})\nAccount: ${bech32Address}\nNonce: ${nonce()}\nIssued At: ${new Date().toISOString()}`;
+    const signature = await native.signArbitrary(QOREX_CHAIN, bech32Address, message);
+    const cut = (v) => (typeof v === "string" && v.length > 60 ? v.slice(0, 40) + `… (${v.length} chars)` : v);
+    show({ signedInWith: "QoreX", account: bech32Address, chainId: QOREX_CHAIN, message, signature: JSON.parse(JSON.stringify(signature, (_k, v) => cut(v))) });
+  } catch (e) { fail(e); }
+};

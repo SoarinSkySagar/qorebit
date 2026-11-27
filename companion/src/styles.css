@@ -254,3 +254,6 @@ label.pw > span:first-child { display: block; margin-bottom: 5px; }
 .kv dt { color: var(--muted, #9d8fc4); font-size: 13px; }
 .kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .kv a { color: var(--lav); }
+
+.txlink { color: var(--lav); text-decoration: none; }
+.txlink:hover { text-decoration: underline; }

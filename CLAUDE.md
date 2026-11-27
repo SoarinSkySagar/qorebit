@@ -104,6 +104,13 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   /qorechain/abstractaccount/v1/accounts` filtered by `owner`; rules at `/accounts/{address}/spending_rules`. Limits are in uqor.
 - Rules bind linked keys (ed25519 authenticators) and relayers, not the owner's own direct sends. Linking keys and `execute-cosmos` are not built.
 
+## QoreX connection and the generated app (organisers' requirement for Quantum Pass, 28 Nov)
+
+- They said the app itself must connect QoreX (a wallet being Qorebit does not replace it), and that the generated app should be visible in its own folder:
+  `apps/web` = `create-qorechain-dapp@0.14.0 --template fullstack-web` output, structure kept; added `src/WalletConnect.tsx` (QoreX via `window.qorex.native`, or Qorebit
+  via `window.qorechain`, one `MsgSend`, explorer link) and two lines in `App.tsx`. QoreX docs: docs.qorechain.io/qorex/dapp-integration (detect `window.qorex`, never `window.keplr`;
+  testnet chain id `qorechain-diana`). `extension/demo` has *Sign in with QoreX* (`signArbitrary`). Tested with stand-in wallets only; the hybrid tx should be sent through QoreX.
+
 ## The wallet UI and the extension provider
 
 - `companion/src/App.tsx` is a shell (header with account and network dropdowns, tab bar Home / Activity / Apps / Device) around one screen per

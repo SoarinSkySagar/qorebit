@@ -65,3 +65,6 @@ companion/dist/
 extension/dist/
 extension/dist-firefox/
 extension/store/
+
+# Generated app build output
+apps/web/dist/
