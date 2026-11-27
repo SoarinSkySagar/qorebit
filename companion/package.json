@@ -14,6 +14,7 @@
     "@noble/hashes": "^2.4.0",
     "@qorechain/pqc": "0.2.3",
     "@qorechain/qoresign": "0.2.0",
+    "@qorechain/sdk": "0.14.0",
     "cosmjs-types": "0.11.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -24,5 +25,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
     "vite": "^6.0.0"
-  }
+  },
+  "version": "0.0.0",
+  "description": "Qorebit wallet companion: started from the create-qorechain-dapp fullstack-web starter (Vite + React + @qorechain/sdk), extended into the wallet UI."
 }

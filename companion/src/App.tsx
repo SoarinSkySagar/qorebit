@@ -9,6 +9,7 @@ import { MultisigCard } from "./Multisig";
 import { TokensCard } from "./Tokens";
 import { SignInCard } from "./SignIn";
 import { CrossVmCard } from "./CrossVm";
+import { ChainStatusCard } from "./ChainStatus";
 import { SmartAccountCard } from "./SmartAccount";
 import { qorToEvmHex } from "./crossVmMsg";
 import { ext } from "./ext";
@@ -381,6 +382,7 @@ export function App() {
                   info={info} chainAcct={chainAcct} pqRegistered={pqRegistered} chainError={chainError}
                   onRegister={registerKey} onFaucet={faucet} busy={!!wait}
                 />
+                <ChainStatusCard net={net} address={acct?.bech32 ?? null} />
                 <div className="recent-head"><h2>Recent activity</h2><button className="linkbtn" onClick={() => go("activity")}>See all</button></div>
                 <ActivityCard activity={activity?.slice(0, 4) ?? null} bare />
               </>

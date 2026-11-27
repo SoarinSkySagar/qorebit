@@ -44,6 +44,7 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
 
 - Build: `./build.sh emu | device` (via `make`). `vdisplay` (default) shows the screen in a window; `panel` is the
   ST7789 + buttons on PB1 / PB2 (`panel.rs`, uDMA SPI; it has booted on a board). PROG only enters the bootloader.
+- The board's screens draw no LEFT / RIGHT button hints at the bottom (removed 27 Nov at the user's request, for content space); the labels are still set in `flows.rs` but not drawn.
 - Two buttons: right = 1 / approve, left = 0 / reject, no tap or hold. DISPLAY_INPUT carries `decision u8`.
   `flows.rs` talks to the screen through `Io` (`ask` → `Some(true)` right / `Some(false)` left); unit tests script it.
 - State: keystore slots **320..=325** and one-way counter **233** (Quazar uses 300..=305 and 232: one board can hold
@@ -135,6 +136,14 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   post-quantum hardware wallet on open-source, verifiable hardware": never state it as fact or claim the silicon was inspected. Text lives in README ("Open
   hardware and a verifiable chip"), SUBMISSION.md, HARDWARE.md.
 
+## @qorechain/sdk in the companion
+
+- `companion/src/sdk.ts` (`createClient`, `getLatestBlock`, `fetchMinGasPriceUqor`, `fetchPqcStatus`, `explorerAddressUrl`) pointed at the bridge's `/proxy/<net>/rest`;
+  `ChainStatus.tsx` is the read-only panel on Home. It is loaded lazily (the SDK is ~2.3 MB). Read-only: signing stays on the device and in `tx.ts`.
+  Quantum Pass's `create-qorechain-dapp` item: the organisers said starting from `fullstack-web` counts. `companion/` has the starter's skeleton merged in
+  (`.env.example`, `/lcd` proxy in `vite.config.ts`, `STARTER-README.md`, `src/starter/App.tsx`) with the wallet code copied on top; the exact command is in the
+  README Credits. Say "started from the starter and extended", not "generated".
+
 ## The fest this is entered in (QoreChain "Build Before Q-Day", build.qorechain.io)
 
 - Read `SUBMISSION.md` first: criteria, category analysis, form text, checklist. `DEMO.md` = 3 minute video script, `PROOF.md` = testnet
@@ -144,7 +153,7 @@ make stack                # ML-DSA-87 stack need (the firmware gives signing 416
   verified in the repo and on chain 25%, post-quantum correctness 20%, originality 15%, clarity / UX / docs 15%.
 - Required: public repo with MIT / Apache-2.0 licence and README, a video up to 3 minutes, testnet `qor1…` addresses, honest kit and feature
   ticks (kits from dependency files, features from transactions of the listed addresses), libraries credited in the README, only commits
-  from 4 Nov. Category: **Quantum Pass** (decided by the author, 27 Nov); `create-qorechain-dapp` is not used, which is the open question.
+  from 4 Nov, a cover / featured image (Rules say required, Start says optional: make one), and a README that credits reused work (Quazar). Category: **Quantum Pass** (decided by the author, 27 Nov); `create-qorechain-dapp`: organisers said the `fullstack-web` starter counts (27 Nov); companion merged onto it. Still open: connect QoreX, a real tx hash in the README.
 - Keep claims verifiable: do not write a transaction hash, address, test count or "verified on hardware" that was not seen. Keep README
   "Honest status", `AI_USAGE.md` and `SUBMISSION.md` section 7 in step with the code when a feature lands.
 

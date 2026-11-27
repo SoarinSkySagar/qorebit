@@ -247,3 +247,10 @@ label.pw > span:first-child { display: block; margin-bottom: 5px; }
 .lock-forgot { margin-top: 16px; font-size: 12.5px; color: var(--muted); }
 .lock-forgot summary { cursor: pointer; text-align: center; }
 .lock-forgot p { margin: 10px 0 0; }
+
+/* chain status (read with @qorechain/sdk) */
+.kv { margin: 8px 0 0; display: grid; gap: 8px; }
+.kv > div { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.kv dt { color: var(--muted, #9d8fc4); font-size: 13px; }
+.kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.kv a { color: var(--lav); }

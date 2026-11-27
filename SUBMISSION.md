@@ -25,8 +25,8 @@ live demo show 16 Dec, payouts 17 to 22 Dec, follow-on QOR grants from January 2
 Jurors score by hand, check the repo items themselves and may ask finalists for a change (48 hours). Checks that must pass for any category:
 public GitHub repo under **MIT or Apache-2.0** (the licence file must be detected by GitHub), a **README**, **video up to 3 minutes** showing the
 project working, **at least one testnet `qor1…` address** the project uses, every team member registered, commits made during the fest,
-kits and features ticked only if they are really used. A 16:9 cover image (at least 1200 x 675, up to 5 MB) is optional (one is made from the name).
-Open-source libraries, kits and templates **must be credited in the README** (see its Credits section). Pre-built or copied projects are disqualified.
+kits and features ticked only if they are really used. A 16:9 **cover image** (at least 1200 x 675, JPG / PNG / WebP, up to 5 MB): the Start page calls it optional (one is made from the name), but the Rules page lists "a featured image" as required and the checks list it, so **make one**.
+Open-source libraries, kits and templates **must be credited in the README** (see its Credits section). Pre-built or copied projects are disqualified: "Projects are built during the event" and "only commits made from 4 November count". The FAQ allows reusing your own idea and experience, and your own published libraries when credited: "start a fresh repository and build the QoreChain part during the fest." (Second reading of Rules, Start, FAQ and Prizes on 27 Nov: no country restriction, no ban or disclosure rule for AI-written code, and nothing about hardware projects. Everything runs on the testnet; People's Choice voting is on mainnet.)
 
 **Kits and features are verified by the organisers.** A kit is "verified" when its package name appears in a dependency file. A network feature is
 "verified" when transactions from the project's listed `qor1…` addresses show it. Checks run on save, on every push, daily and on "Check again" in
@@ -55,16 +55,16 @@ What Quantum Pass asks for, and where Qorebit stands:
 | Requirement | Qorebit |
 |---|---|
 | A small original QoreChain app, tool, game or bot | a hardware wallet and its companion: original, built since 10 Nov |
-| Connect QoreX (on Testnet) | registration step, author to confirm |
-| Deploy on the testnet | there is no contract to deploy; the wallet signs and sends testnet transactions (list the addresses in PROOF.md) |
-| Complete one hybrid-signed transaction | yes: every native transaction carries both signatures |
-| Use `create-qorechain-dapp` | **not used**: the open question below |
+| Connect QoreX (on Testnet) | **Open.** The organisers' answer (27 Nov): "the companion app needs to connect QoreX", so registration alone may not be enough. Nothing in the companion talks to QoreX yet; find out what QoreX exposes (provider or wallet standard) and build the connection, or ask what they accept |
+| Deploy on the testnet | organisers confirmed (27 Nov): no contract needed; an app that runs against the testnet and sends real transactions from the listed `qor1…` addresses is fine |
+| Complete one hybrid-signed transaction | yes in practice; the organisers want the tx hash on explore.qore.network in the README. **Open: copy one real hash from the wallet's Activity screen into README and PROOF.md** |
+| Use `create-qorechain-dapp` | organisers (27 Nov): starting the companion from the `fullstack-web` starter counts; jurors check by hand, so keep the generated structure and put the exact command in the README. **Done (27 Nov):** the starter was generated with the command in the README and its skeleton merged into `companion/` (the wallet's code was copied on top, not generated). The README says exactly that |
 
 Prizes: the jury scores the projects that pass, and the ten best win $150 each; then 20 prizes of $50 are drawn by a public script (drand
 beacon) from the other passing projects, one entry per project. So passing every check matters more than any single feature: finish the
 checklist in section 6. Quantum Pass is also where the follow-on Community Grant (up to $5,000 in QOR, from January 2027) applies.
 
-**Still ask:** in the fest Discord or at workshop 4 (27 Nov, 16:30) or at workshop 4 (27 Nov, 16:30) whether a signing tool without `create-qorechain-dapp`
+**Still ask:** in the fest Discord or at workshop 4 (27 Nov, 16:30) whether a signing tool without `create-qorechain-dapp`
 passes the Quantum Pass check, and say what Qorebit is before the deadline.
 
 ## 3. Text for the project form
@@ -98,10 +98,12 @@ What it does not do: the chip is mostly open, not fully (bus fabric, analog bloc
 
 **How it's made** (max 5000):
 ```
+What we reused: the Xous firmware setup, the bridge and the flashing scripts follow the author's earlier Quazar wallet (credited in the README). Everything on QoreChain, the signer, the screens, the two-button input, the companion, the extensions and the tests were written during the fest (first commit 10 Nov).
+
 What we're using
 - The board: Baochip-1x (Dabao), Xous OS, Rust. The firmware is a Xous app; the signer is a no_std Rust crate (qorebit-signer): BIP-39/32 keys, protobuf decode of the transaction, a policy check, ML-DSA-87 and secp256k1, SIWQ.
 - @qorechain/qoresign 0.2.0 and @qorechain/pqc 0.2.3 are the ground truth: tools/gen-vectors.mjs makes the test vectors, the Rust signer must match them byte for byte, and make test-emu has a real local QoreChain node verify what the firmware signs.
-- The companion (React, TypeScript, Vite) builds transactions and talks to a small Python bridge (USB HID, or TCP to the emulator). The browser extensions are the same app plus a provider for websites.
+- The companion (React, TypeScript, Vite; it follows the create-qorechain-dapp fullstack-web starter and reads the chain with @qorechain/sdk) builds transactions and talks to a small Python bridge (USB HID, or TCP to the emulator). The browser extensions are the same app plus a provider for websites.
 
 Hard parts
 - ML-DSA-87 needs about 350 KiB of stack on a chip with 2 MiB of SRAM, so signing runs on a short-lived 416 KiB thread. The chip's Keccak engines (made for hash-based signatures) turned out slower than the CPU, so they are not used.
@@ -123,9 +125,10 @@ We build this AI-natively: Claude Code wrote most of the code and docs under the
 
 | Kit | Variant | Tick? |
 |---|---|---|
+| QoreChain SDK | TypeScript (`companion/package.json`, `@qorechain/sdk` 0.14.0, used in `companion/src/sdk.ts`) | yes |
 | QoreSign | TypeScript (`companion/package.json`, `tools/package.json`, 0.2.0) | yes |
 | qorechain-pqc | TypeScript (0.2.3, same files) | yes |
-| create-qorechain-dapp | | **no**, not used (see section 2) |
+| create-qorechain-dapp | | yes, partly in the sense of a merge: the scaffolder (0.14.0, `fullstack-web`) was run and its skeleton merged into `companion/`, the wallet code copied on top (README has the command); jurors look by hand, so say what was done and no more. Only `companion/` (the website, which the extension's panel reuses) is starter-based; the extension's background, content and provider scripts and the demo page are our own |
 | QoreX integrations, wallet adapter, RDK, QoreSeal, Asset Kit, QoreScan, MCP, Custody | | no |
 
 The Rust signer implements ML-DSA-87 and the scheme itself, so no kit is named in `Cargo.toml`; the organisers' check will not see a Rust kit.
@@ -168,13 +171,17 @@ the transaction hashes are copied from the Activity screen.
 | Testnet `qor1…` addresses on the form | to do |
 | PROOF.md with transaction hashes | to do: copy them from the testnet explorer |
 | Video, up to 3 minutes | to do: record with [DEMO.md](DEMO.md) |
-| Cover image (optional) | to do |
+| Cover image (treat as required: Rules say so, Start says optional) | to do: 16:9, at least 1200 x 675, up to 5 MB |
+| Create the project on the form now (name, tagline, category, description) and link the repo | to do: commits only show once it is linked; the form is the submission |
+| Choose the registration level to match the category (the sign-up asks for Quantum Pass, Intermediate, Advanced or Expert) | author to confirm |
+| Check the raffle's excluded-country list when it is published (prizes cannot be paid where law or sanctions forbid) | before 16 Dec |
 | AI-native option ticked | to do, on the form |
 | Category: Quantum Pass chosen; ask whether `create-qorechain-dapp` is required for a signing tool | decided; the question is still to ask (section 2) |
 | Short post in the fest Discord (what it does, category, features) | to do: feedback before judging |
 
 ## 7. What a juror may find (be honest about it)
 
+* **Originality rule.** The rules disqualify "copied or pre-built projects" and count only commits from 4 Nov. This repository is new (first commit 10 Nov) and the reuse is the author's own earlier wallet, as the FAQ permits when credited; the README's Credits section names it. Say plainly in the form that the Xous setup, bridge and flashing follow Quazar and that the QoreChain signer, screens, input, companion and extensions are new. Do not call the whole project new.
 * **Reused work.** The Xous firmware setup, the bridge and the flashing scripts follow the author's earlier Quazar wallet (Ethereum and leanSPHINCS).
   The chain, the signer, the screens, the input, the companion and everything on QoreChain are new since 10 Nov. The README's Credits say so.
 * **No QoreX in the loop.** Qorebit is its own wallet; QoreX is only used for fest registration. The keys follow QoreSign's derivation, so the same

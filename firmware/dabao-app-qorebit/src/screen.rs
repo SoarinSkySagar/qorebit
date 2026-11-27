@@ -12,7 +12,7 @@
 
 use embedded_graphics::{
     mono_font::{
-        ascii::{FONT_10X20, FONT_6X10, FONT_7X13, FONT_8X13, FONT_9X18, FONT_9X18_BOLD},
+        ascii::{FONT_10X20, FONT_7X13, FONT_8X13, FONT_9X18, FONT_9X18_BOLD},
         MonoFont, MonoTextStyle,
     },
     pixelcolor::raw::RawU8,
@@ -225,7 +225,10 @@ pub struct Input {
     pub tag: &'static str,
     pub heading: String,
     pub body: Body,
+    // The labels are no longer drawn (no button bar); the flows still set them, and the tests read them.
+    #[allow(dead_code)]
     pub left: (String, Btn),
+    #[allow(dead_code)]
     pub right: (String, Btn),
     /// A PIN entry screen (the display link reports it apart from other input screens).
     pub pin: bool,
@@ -270,7 +273,9 @@ pub enum Screen {
 
 const M: i32 = 12; // side margin
 const NAV_H: i32 = 34;
-const ACTIONS_Y: i32 = HEIGHT as i32 - 33; // top of the left / right button hints
+// No button hints at the bottom any more (the user knows which button does what): content may use the
+// whole screen down to this line, and the approval countdown bar sits just above the edge.
+const ACTIONS_Y: i32 = HEIGHT as i32 - 8; // bottom edge of the content
 const BAR_Y: i32 = ACTIONS_Y - 8; // countdown bar
 
 fn fill(f: &mut Frame, x: i32, y: i32, w: i32, h: i32, c: Pal) {
@@ -637,30 +642,6 @@ fn approval(f: &mut Frame, a: &Approval, left: u8, timeout: u8) {
     fill(f, M, BAR_Y, full, 4, LINE);
     fill(f, M, BAR_Y, w, 4, tone);
     text_at(f, &format!("{left}s"), &FONT_7X13, tone, WIDTH as i32 - M, BAR_Y - 5, Alignment::Right);
-
-    // the left button rejects, the right one approves
-    buttons(f, ("REJECT", Btn::Bad), ("APPROVE", Btn::Good));
-}
-
-/// The two buttons: "LEFT" and "RIGHT", each with what it does here.
-fn buttons(f: &mut Frame, left: (&str, Btn), right: (&str, Btn)) {
-    let bw = (WIDTH as i32 - 2 * 8 - 8) / 2;
-    for (x, tag, (label, b)) in [(8, "LEFT", left), (8 + bw + 8, "RIGHT", right)] {
-        let (fg, bg) = match b {
-            Btn::Good => (GREEN, GREEN_D),
-            Btn::Bad => (RED, RED_D),
-            Btn::Neutral => (INK, LINE),
-        };
-        RoundedRectangle::new(
-            Rectangle::new(Point::new(x, ACTIONS_Y), Size::new(bw as u32, 28 + 2)),
-            CornerRadii::new(Size::new(6, 6)),
-        )
-        .into_styled(PrimitiveStyle::with_fill(bg))
-        .draw(f)
-        .ok();
-        text_at(f, tag, &FONT_6X10, MUTED, x + bw / 2, ACTIONS_Y + 3, Alignment::Center);
-        text_at(f, label, &FONT_7X13, fg, x + bw / 2, ACTIONS_Y + 15, Alignment::Center);
-    }
 }
 
 fn tone_color(t: Tone) -> Pal {
@@ -736,7 +717,6 @@ fn input(f: &mut Frame, i: &Input) {
             }
         }
     }
-    buttons(f, (&i.left.0, i.left.1), (&i.right.0, i.right.1));
 }
 
 fn result(f: &mut Frame, tone: Tone, word: &str, lines: &[String]) {
@@ -961,6 +941,32 @@ mod tests {
                     },
                     left: ("< EARLIER".into(), Btn::Neutral),
                     right: ("LATER >".into(), Btn::Neutral),
+                    pin: false,
+                }),
+                0,
+            ),
+            (
+                "22-words",
+                Screen::Input(Input {
+                    tag: "BACKUP",
+                    heading: "Your recovery words (1 to 6 of 24)".into(),
+                    body: Body::Words(
+                        ["abandon", "ability", "able", "about", "above", "absent"].iter().enumerate().map(|(k, w)| (k + 1, w.to_string())).collect(),
+                    ),
+                    left: ("< BACK".into(), Btn::Neutral),
+                    right: ("NEXT >".into(), Btn::Neutral),
+                    pin: false,
+                }),
+                0,
+            ),
+            (
+                "23-passphrase",
+                Screen::Input(Input {
+                    tag: "PASSPHRASE",
+                    heading: "Use this passphrase?".into(),
+                    body: Body::Text(vec![(None, "0 1 1 0 1 0 0 1".into())]),
+                    left: ("REDO".into(), Btn::Neutral),
+                    right: ("USE IT".into(), Btn::Good),
                     pin: false,
                 }),
                 0,
